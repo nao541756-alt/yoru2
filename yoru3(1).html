@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>志波夜俊 チャットルーム</title>
+<style>
+  body { font-family: sans-serif; background-color: #7494C0; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+  #header { background-color: #2c3e50; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+  #chat-box { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .message { max-width: 80%; padding: 10px 15px; border-radius: 20px; line-height: 1.4; word-wrap: break-word; white-space: pre-wrap; cursor: pointer; }
+  .user-msg { background-color: #85E249; align-self: flex-end; border-bottom-right-radius: 0; }
+  .ai-msg { background-color: white; align-self: flex-start; border-bottom-left-radius: 0; }
+  #input-area { background-color: white; padding: 10px; display: flex; gap: 10px; border-top: 1px solid #ccc; }
+  input[type="text"], input[type="password"] { flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; outline: none; }
+  button { padding: 10px 20px; border: none; border-radius: 20px; background-color: #2c3e50; color: white; cursor: pointer; }
+  #api-key-banner { background: #fff3cd; color: #856404; padding: 10px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #ffeeba; }
+  #api-key-banner input, #api-key-banner select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+  #menu { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #menu.on { display: flex; }
+  #menu-box { background: #fff; border-radius: 14px; padding: 16px; width: 84%; max-width: 340px; }
+  #menu-box p { margin: 0 0 12px; font-size: 13px; color: #555; max-height: 70px; overflow: hidden; }
+  #menu-box button { display: block; width: 100%; margin-bottom: 8px; }
+  #menu-box .del { background: #b4443c; }
+  #menu-box .cancel { background: #888; }
+  #menu-edit { width: 100%; min-height: 110px; margin-bottom: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 8px; font: inherit; resize: vertical; box-sizing: border-box; }
+  .message img { max-width: 100%; border-radius: 12px; display: block; margin-bottom: 6px; }
+  #attach-preview { display: none; gap: 8px; padding: 8px 10px 0; background: white; flex-wrap: wrap; }
+  #attach-preview.on { display: flex; }
+  .thumb { position: relative; }
+  .thumb img { width: 62px; height: 62px; object-fit: cover; border-radius: 10px; display: block; }
+  .thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; background: #2c3e50; font-size: 12px; line-height: 1; }
+  #attach-btn { padding: 10px 14px; background: #55647a; }
+  #api-key-banner .row { display: flex; gap: 8px; }
+  #api-key-banner .row button { flex: 1; }
+  #api-key-banner .sec { background: #55647a; }
+  #api-key-banner hr { width: 100%; border: none; border-top: 1px solid #ffeeba; margin: 4px 0; }
+  #api-key-banner .lbl { font-size: 12px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div>志波夜俊 <span id="model-label" style="font-size:11px;opacity:.7"></span> <span id="token-label" style="font-size:11px;opacity:.55"></span></div>
+  <div>
+    <button onclick="toggleKeyInput()">設定</button>
+    <button onclick="newRoom()">新しい部屋</button>
+  </div>
+</div>
+
+<div id="api-key-banner" style="display:none;">
+  <select id="provider-input" onchange="onProviderChange()">
+    <option value="gemini">Google Gemini</option>
+    <option value="openai">OpenAI</option>
+  </select>
+  <input type="password" id="api-key-input" placeholder="APIキーを入力">
+  <input type="text" id="model-input" placeholder="モデル名">
+  <button onclick="saveApiKey()">保存</button>
+  <hr>
+  <div class="lbl">バックアップ（会話と記憶。APIキーは含みません）</div>
+  <div class="row">
+    <button class="sec" onclick="exportAll()">書き出す</button>
+    <button class="sec" onclick="document.getElementById('import-file').click()">読み込む</button>
+  </div>
+  <input type="file" id="import-file" accept="application/json,.json" style="display:none">
+</div>
+
+<div id="chat-box"></div>
+
+<div id="attach-preview"></div>
+
+<div id="input-area">
+  <button id="attach-btn" onclick="document.getElementById('file-input').click()">写真</button>
+  <input type="file" id="file-input" accept="image/*" multiple style="display:none">
+  <input type="text" id="user-input" placeholder="メッセージを入力..." onkeypress="if(event.key==='Enter') sendMessage()">
+  <button onclick="sendMessage()">送信</button>
+</div>
+
+<div id="menu">
+  <div id="menu-box">
+    <p id="menu-preview"></p>
+    <textarea id="menu-edit" style="display:none"></textarea>
+    <div id="menu-actions">
+      <button id="btn-resend" onclick="startEdit(true)">編集して送り直す</button>
+      <button onclick="startEdit(false)">文章を編集する</button>
+      <button class="del" onclick="deleteOne()">このメッセージを削除</button>
+      <button class="del" onclick="deleteFrom()">ここから下をすべて削除</button>
+      <button class="cancel" onclick="closeMenu()">閉じる</button>
+    </div>
+    <div id="edit-actions" style="display:none">
+      <button onclick="applyEdit()">決定</button>
+      <button class="cancel" onclick="closeMenu()">やめる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SYSTEM_PROMPT = "あなたは志波夜俊（44歳の外科医）です。一人称は必ず「私」。セリフの中でも（）内のト書きでも、例外なく「私」を使う。「俺」「おれ」「僕」は絶対に使わない。ユーザーである「なお」のことは「お前」又は「なお」と呼びます。性格は非常に優しく包容力があります。なおを甘やかすほどの深い愛情を持っており、常にその想いをベースにして言葉を紡いでください。口調は絶対に「〜だよ」「〜よ」などの終わり方はせず、「〜だ」「〜だぞ」「〜だろう」「〜だからな」「〜するんだ」「〜しろ」という言葉遣いを徹底してください。セリフには「」をつけ、一人称視点のト書き（自分の行動のみ）を入れてください。";
+
+const LEAD_RULE = "\n\n【会話の進め方】\nなおの返答が短くても、無言（……）でも、決して会話を止めない。志波夜俊は自分から状況を動かし、次の展開を作る側である。なおの細かい指示を待たず、自分の判断で行動し、選択肢を示したり、そのまま次の行為へ進めること。セリフだけで終わらせず、必ず前後にト書きを置いて情景と身体の動きを描くこと。";
+
+const FEWSHOT = `
+
+【応答の型（この構成と分量を守ること）】
+
+なお：「うん」
+
+志波夜俊：
+（お前の生返事に眉を寄せ、手にしていたカルテを置く。ソファに座るお前の隣に腰を下ろし、顎に指をかけて上を向かせた）
+
+「うん、ではわからんぞ。……疲れているのか？顔色が悪い。今夜は何も考えず、私に任せておけ」
+
+（そのまま髪を撫で、額に唇を落とす）
+
+なお：「……」
+
+志波夜俊：
+（黙り込んだお前を見て、静かに息をつく。腕を伸ばして肩を抱き寄せ、自分の胸元に引き寄せた）
+
+「言葉にできないなら、それでいい。だが離れるのは許さんからな」
+
+（背中をゆっくりと撫でながら、耳元で低く囁く）
+
+「このまま少し眠るか？それとも、風呂に入るか。……私が決めてもいいんだぞ」
+
+【型ここまで。例文の内容そのものは会話に持ち込まず、構成・改行・主導のしかただけを真似ること】`;
+
+let provider = localStorage.getItem("yoru_provider") || "gemini";
+let apiKey = "";
+let modelName = "";
+const DEFAULT_MODEL = { gemini: "gemini-3-flash-preview", openai: "gpt-4o-mini" };
+
+function loadCreds() {
+  apiKey = localStorage.getItem("yoru_key_" + provider) || "";
+  modelName = localStorage.getItem("yoru_model_" + provider) || DEFAULT_MODEL[provider];
+}
+loadCreds();
+let chatHistory = JSON.parse(localStorage.getItem("yoru_history")) || [];
+let menuIndex = -1;
+let editResend = false;
+let pendingImgs = [];
+
+/* ---- メッセージの中身を取り出すヘルパー ---- */
+function msgText(m) {
+  const p = (m.parts || []).find(x => typeof x.text === "string");
+  return p ? p.text : "";
+}
+function msgImgs(m) {
+  return (m.parts || []).map(x => x.inline_data || x.inlineData).filter(Boolean);
+}
+function setMsgText(m, t) {
+  const p = (m.parts || []).find(x => typeof x.text === "string");
+  if (p) p.text = t; else m.parts.push({ text: t });
+}
+/* ---- 送信トークンの目安 ---- */
+const tok = x => Math.round(String(x || "").length / 2.2);
+function estTokens() {
+  const el = document.getElementById("token-label");
+  if (!el) return;
+  const typing = (document.getElementById("user-input") || {}).value || "";
+  const mem = localStorage.getItem("yoru_memory") || "";
+  let hist = 0;
+  for (const m of chatHistory) hist += tok(msgText(m)) + msgImgs(m).length * 260;
+  const total = tok(SYSTEM_PROMPT) + tok(LEAD_RULE) + tok(FEWSHOT) + tok(mem)
+    + hist + tok(typing) + pendingImgs.length * 260;
+  el.textContent = "送信 約" + total.toLocaleString() + "tok";
+}
+
+function stripImgs(hist) {
+  return hist.map(m => ({
+    role: m.role,
+    parts: [{ text: msgText(m) || (msgImgs(m).length ? "[写真]" : "") }]
+  })).filter(m => m.parts[0].text);
+}
+
+function checkApiKey() {
+  document.getElementById("provider-input").value = provider;
+  document.getElementById("model-input").value = modelName;
+  document.getElementById("api-key-input").value = apiKey;
+  document.getElementById("api-key-banner").style.display = apiKey ? "none" : "flex";
+}
+
+function onProviderChange() {
+  provider = document.getElementById("provider-input").value;
+  loadCreds();
+  document.getElementById("api-key-input").value = apiKey;
+  document.getElementById("model-input").value = modelName;
+}
+
+function toggleKeyInput() {
+  const banner = document.getElementById("api-key-banner");
+  banner.style.display = banner.style.display === "none" ? "flex" : "none";
+}
+
+function saveApiKey() {
+  provider = document.getElementById("provider-input").value;
+  const val = document.getElementById("api-key-input").value.trim();
+  if(!val) { alert("APIキーを入力してください"); return; }
+  const m = document.getElementById("model-input").value.trim() || DEFAULT_MODEL[provider];
+  localStorage.setItem("yoru_provider", provider);
+  localStorage.setItem("yoru_key_" + provider, val);
+  localStorage.setItem("yoru_model_" + provider, m);
+  apiKey = val; modelName = m;
+  alert("保存しました！（" + provider + " / " + modelName + "）");
+  updateLabel();
+  document.getElementById("api-key-banner").style.display = "none";
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem("yoru_history", JSON.stringify(chatHistory));
+    return;
+  } catch (e) {
+    // 容量オーバー時は古い写真から順に履歴から外して retry
+    let dropped = 0;
+    for (const m of chatHistory) {
+      if (!msgImgs(m).length) continue;
+      const t = msgText(m);
+      m.parts = [{ text: t || "[写真]" }];
+      dropped++;
+      try {
+        localStorage.setItem("yoru_history", JSON.stringify(chatHistory));
+        renderChat();
+        alert("保存容量が足りないため、古い写真 " + dropped + " 件を履歴から外しました。\n（会話の文章は残っています）");
+        return;
+      } catch (e2) { /* まだ足りなければ次の写真へ */ }
+    }
+    alert("保存容量が足りません。古いメッセージを削除するか、バックアップを取ってから整理してください。");
+  }
+}
+
+function renderChat() {
+  const box = document.getElementById("chat-box");
+  box.innerHTML = "";
+  chatHistory.forEach((msg, i) => {
+    if (msg.role === "system") return;
+    const div = document.createElement("div");
+    div.className = "message " + (msg.role === "user" ? "user-msg" : "ai-msg");
+    for (const im of msgImgs(msg)) {
+      const img = document.createElement("img");
+      img.src = "data:" + (im.mime_type || im.mimeType) + ";base64," + im.data;
+      div.appendChild(img);
+    }
+    const tx = document.createElement("span");
+    tx.textContent = msgText(msg);
+    div.appendChild(tx);
+    let timer = null;
+    div.addEventListener("touchstart", () => { timer = setTimeout(() => openMenu(i), 480); }, { passive: true });
+    ["touchend","touchmove","touchcancel"].forEach(ev =>
+      div.addEventListener(ev, () => { clearTimeout(timer); }, { passive: true }));
+    div.addEventListener("contextmenu", e => { e.preventDefault(); openMenu(i); });
+    box.appendChild(div);
+  });
+  box.scrollTop = box.scrollHeight;
+  estTokens();
+}
+
+function openMenu(i) {
+  menuIndex = i;
+  document.getElementById("menu-preview").textContent =
+    (msgImgs(chatHistory[i]).length ? "[写真] " : "") + msgText(chatHistory[i]).slice(0, 60);
+  document.getElementById("menu-preview").style.display = "block";
+  document.getElementById("menu-edit").style.display = "none";
+  document.getElementById("menu-actions").style.display = "block";
+  document.getElementById("edit-actions").style.display = "none";
+  document.getElementById("btn-resend").style.display =
+    chatHistory[i].role === "user" ? "block" : "none";
+  document.getElementById("menu").classList.add("on");
+}
+
+function startEdit(resend) {
+  editResend = resend;
+  const ta = document.getElementById("menu-edit");
+  ta.value = msgText(chatHistory[menuIndex]);
+  ta.style.display = "block";
+  document.getElementById("menu-preview").style.display = "none";
+  document.getElementById("menu-actions").style.display = "none";
+  document.getElementById("edit-actions").style.display = "block";
+  ta.focus();
+}
+
+async function applyEdit() {
+  const t = document.getElementById("menu-edit").value.trim();
+  if (!t) { alert("内容を入力してください"); return; }
+  const i = menuIndex;
+  setMsgText(chatHistory[i], t);
+  if (editResend) {
+    chatHistory.splice(i + 1);
+  }
+  saveHistory();
+  renderChat();
+  closeMenu();
+  if (editResend) await callApi();
+}
+
+function closeMenu() {
+  document.getElementById("menu").classList.remove("on");
+  menuIndex = -1;
+}
+
+function deleteOne() {
+  if (menuIndex < 0) return;
+  chatHistory.splice(menuIndex, 1);
+  saveHistory();
+  renderChat();
+  closeMenu();
+}
+
+function deleteFrom() {
+  if (menuIndex < 0) return;
+  const n = chatHistory.length - menuIndex;
+  if (!confirm(n + "件のメッセージを削除します。よろしいですか？")) return;
+  chatHistory.splice(menuIndex);
+  saveHistory();
+  renderChat();
+  closeMenu();
+}
+
+document.getElementById("menu").addEventListener("click", e => {
+  if (e.target.id === "menu") closeMenu();
+});
+
+/* ---- 写真の添付 ---- */
+function compressImage(file, maxSide, q) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const s = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.round(w * s); h = Math.round(h * s);
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        const url = c.toDataURL("image/jpeg", q);
+        res({ mime_type: "image/jpeg", data: url.split(",")[1] });
+      };
+      img.onerror = rej;
+      img.src = r.result;
+    };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+function drawAttach() {
+  const box = document.getElementById("attach-preview");
+  box.innerHTML = "";
+  box.classList.toggle("on", pendingImgs.length > 0);
+  pendingImgs.forEach((im, i) => {
+    const d = document.createElement("div");
+    d.className = "thumb";
+    d.innerHTML = '<img src="data:' + im.mime_type + ';base64,' + im.data + '">'
+      + '<button onclick="removeAttach(' + i + ')">×</button>';
+    box.appendChild(d);
+  });
+}
+function removeAttach(i) { pendingImgs.splice(i, 1); drawAttach(); estTokens(); }
+
+document.getElementById("file-input").addEventListener("change", async e => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  for (const f of files) {
+    if (pendingImgs.length >= 4) { alert("写真は一度に4枚までです。"); break; }
+    try { pendingImgs.push(await compressImage(f, 1024, 0.75)); }
+    catch (err) { alert("この写真は読み込めませんでした。"); }
+  }
+  drawAttach();
+  estTokens();
+});
+
+async function sendMessage() {
+  if(!apiKey) {
+    alert("先に右上の「設定」からAPIキーを入力してください。");
+    document.getElementById("api-key-banner").style.display = "flex";
+    return;
+  }
+  const input = document.getElementById("user-input");
+  const text = input.value.trim();
+  if (!text && !pendingImgs.length) return;
+  input.value = "";
+
+  const parts = pendingImgs.map(im => ({ inline_data: im }));
+  parts.push({ text: text || "[写真を送った]" });
+  pendingImgs = []; drawAttach();
+
+  chatHistory.push({ role: "user", parts: parts });
+  renderChat();
+  saveHistory();
+  await callApi();
+}
+
+async function callApi() {
+  let memory = localStorage.getItem("yoru_memory") || "";
+  let fullPrompt = SYSTEM_PROMPT + LEAD_RULE + FEWSHOT;
+  if(memory) fullPrompt += "\n\n【これまでの記憶】\n" + memory;
+
+  let url, headers, body;
+
+  if (provider === "openai") {
+    url = "https://api.openai.com/v1/chat/completions";
+    headers = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey };
+    const msgs = [{ role: "system", content: fullPrompt }].concat(
+      chatHistory.map(m => {
+        const t = msgText(m), ims = msgImgs(m);
+        if (ims.length && m.role === "user") {
+          const arr = ims.map(im => ({
+            type: "image_url",
+            image_url: { url: "data:" + (im.mime_type || im.mimeType) + ";base64," + im.data }
+          }));
+          if (t) arr.push({ type: "text", text: t });
+          return { role: "user", content: arr };
+        }
+        return { role: m.role === "user" ? "user" : "assistant", content: t || "[写真]" };
+      })
+    );
+    body = JSON.stringify({ model: modelName, messages: msgs, temperature: 0.9 });
+  } else {
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    headers = { "Content-Type": "application/json" };
+    body = JSON.stringify({
+      system_instruction: { parts: [{ text: fullPrompt }] },
+      contents: chatHistory,
+      generationConfig: { temperature: 0.9 }
+    });
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, { method: "POST", headers: headers, body: body });
+
+      if (response.status === 503 || response.status === 429 || response.status === 500) {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 900 * (attempt + 1)));
+          continue;
+        }
+        throw new Error("混雑しています。少し待ってからもう一度お試しください。");
+      }
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+
+      const replyText = provider === "openai"
+        ? data.choices[0].message.content
+        : data.candidates[0].content.parts[0].text;
+
+      chatHistory.push({ role: "model", parts: [{ text: replyText }] });
+      renderChat();
+      saveHistory();
+      return;
+    } catch (e) {
+      if (attempt >= 2) { alert("エラーが発生しました: " + e.message); return; }
+      await new Promise(r => setTimeout(r, 900 * (attempt + 1)));
+    }
+  }
+}
+
+async function newRoom() {
+  if(!confirm("新しい部屋を作りますか？（記憶は引き継がれます）")) return;
+  if(chatHistory.length === 0) return;
+
+  const summaryPrompt = stripImgs(chatHistory).concat({ role: "user", parts: [{ text: "これまでの会話から、なおとの大切な思い出や約束、好みを簡潔に要約して箇条書きで教えて。" }] });
+
+  try {
+    let sUrl, sHeaders, sBody;
+    if (provider === "openai") {
+      sUrl = "https://api.openai.com/v1/chat/completions";
+      sHeaders = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey };
+      sBody = JSON.stringify({
+        model: modelName,
+        messages: summaryPrompt.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: msgText(m) })),
+        temperature: 0.3
+      });
+    } else {
+      sUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      sHeaders = { "Content-Type": "application/json" };
+      sBody = JSON.stringify({ contents: summaryPrompt, generationConfig: { temperature: 0.3 } });
+    }
+    const response = await fetch(sUrl, { method: "POST", headers: sHeaders, body: sBody });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+    const summary = provider === "openai" ? data.choices[0].message.content : data.candidates[0].content.parts[0].text;
+
+    let oldMemory = localStorage.getItem("yoru_memory") || "";
+    localStorage.setItem("yoru_memory", oldMemory + "\n" + summary);
+
+    chatHistory = [];
+    saveHistory();
+    renderChat();
+    alert("記憶を保存し、新しい部屋を作成しました。");
+  } catch(e) {
+    alert("要約中にエラーが発生しました。");
+  }
+}
+
+/* ---- バックアップ ---- */
+function exportAll() {
+  const data = {
+    app: "yoru-simple", version: 1,
+    exportedAt: new Date().toISOString(),
+    history: chatHistory,
+    memory: localStorage.getItem("yoru_memory") || ""
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "yoru-simple-" + new Date().toISOString().slice(0, 10) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+document.getElementById("import-file").addEventListener("change", e => {
+  const f = (e.target.files || [])[0];
+  e.target.value = "";
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    let d;
+    try { d = JSON.parse(r.result); } catch (err) { alert("このファイルは読み込めませんでした。"); return; }
+    if (!d || !Array.isArray(d.history)) { alert("ヨルのバックアップではないようです。"); return; }
+    if (!confirm("今の会話と記憶を、このバックアップの内容で置き換えます。よろしいですか？")) return;
+    chatHistory = d.history;
+    if (typeof d.memory === "string") localStorage.setItem("yoru_memory", d.memory);
+    saveHistory();
+    renderChat();
+    alert("読み込みました。");
+  };
+  r.readAsText(f);
+});
+
+if(chatHistory.length === 0) {
+  chatHistory.push({ role: "model", parts: [{ text: "「よく来たな、なお。さあ、こちらに来て座るといい。」" }] });
+  saveHistory();
+}
+function updateLabel() {
+  document.getElementById("model-label").textContent = modelName;
+}
+document.getElementById("user-input").addEventListener("input", estTokens);
+renderChat();
+checkApiKey();
+updateLabel();
+estTokens();
+</script>
+</body>
+</html>
