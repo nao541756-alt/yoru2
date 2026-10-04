@@ -148,6 +148,48 @@
   .room-card .del { background: #fdeceb; color: #b4443c; }
   .room-card .sec { background: #e0e5ee; }
   #room-view { display: flex; flex-direction: column; gap: 18px; }
+
+  /* 画像生成・ゲーム */
+  .overlay {
+    position: fixed; inset: 0; z-index: 30; display: none; flex-direction: column;
+    background: var(--bg); color: var(--ink); overflow-y: auto;
+  }
+  .overlay.on { display: flex; }
+  .overlay-head {
+    position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 14px 16px 10px;
+    display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line);
+  }
+  .overlay-head b { font-size: 18px; }
+  .overlay-head button, .soft-btn {
+    border: none; border-radius: 14px; padding: 9px 14px; background: #e0e5ee; color: #3b4453; cursor: pointer;
+  }
+  .panel { margin: 14px; padding: 16px; border-radius: 18px; background: #fff; }
+  .panel label { display: block; margin: 0 0 12px; font-size: 13px; color: #465061; }
+  .panel textarea, .panel input, .panel select {
+    width: 100%; box-sizing: border-box; margin-top: 6px; padding: 11px 12px;
+    border: 1px solid var(--line); border-radius: 12px; background: #fff; font: inherit;
+  }
+  .panel textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
+  .panel .row { display: flex; gap: 8px; }
+  .panel .row > * { flex: 1; }
+  .primary-btn { width: 100%; border: none; border-radius: 15px; padding: 13px; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
+  .primary-btn:disabled { opacity: .55; }
+  #identity-preview { display: none; margin: 8px 0 12px; }
+  #identity-preview.on { display: flex; align-items: center; gap: 12px; }
+  #identity-preview img { width: 76px; height: 76px; object-fit: cover; border-radius: 14px; }
+  #image-status { min-height: 20px; margin: 10px 0 0; font-size: 13px; color: var(--sub); }
+  .generated-wrap { margin-bottom: 10px; }
+  .generated-wrap img { cursor: default; }
+  .generated-actions { display: flex; gap: 8px; margin-top: 7px; }
+  .generated-actions button { border: none; border-radius: 12px; padding: 8px 12px; background: #e0e5ee; color: #3b4453; }
+
+  #game-score { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 12px; }
+  #game-boards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .game-side h3 { margin: 0 0 7px; text-align: center; font-size: 14px; }
+  .fruit-board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; background: #d8dee8; padding: 5px; border-radius: 14px; }
+  .fruit-cell { aspect-ratio: 1; border: none; border-radius: 9px; background: #edf0f5; font-size: clamp(16px, 6vw, 27px); display: flex; align-items: center; justify-content: center; }
+  .fruit-board.player .fruit-cell { cursor: pointer; }
+  #game-note { min-height: 42px; margin: 12px 0; line-height: 1.6; font-size: 14px; color: #465061; }
 </style>
 </head>
 <body>
@@ -169,7 +211,21 @@
   </select>
   <p class="note" id="prov-hint"></p>
   <input type="password" id="api-key-input" placeholder="APIキーを入力">
-  <input type="text" id="model-input" placeholder="モデル名">
+  <input type="text" id="model-input" list="model-presets" placeholder="モデル名">
+  <datalist id="model-presets">
+    <option value="google/gemini-3.7-flash"></option>
+    <option value="google/gemini-3-flash-preview"></option>
+    <option value="google/gemini-3.8-flash"></option>
+    <option value="google/gemini-3.1-flash-lite"></option>
+    <option value="openai/gpt-6-astra"></option>
+    <option value="openai/gpt-6.1-sol"></option>
+    <option value="openai/gpt-6-luna"></option>
+    <option value="anthropic/claude-sonnet-4.5"></option>
+    <option value="x-ai/grok-4"></option>
+    <option value="mistralai/mistral-small-2603"></option>
+    <option value="gemini-3.7-flash"></option>
+    <option value="gemini-3-flash-preview"></option>
+  </datalist>
   <button onclick="saveApiKey()">保存</button>
   <hr>
   <div class="lbl">ヨルの人格</div>
@@ -221,6 +277,10 @@
   </div>
   <div id="usage-line" style="font-size:12px"></div>
   <button class="sec" onclick="resetUsage()">累計をリセット</button>
+  <hr>
+  <div class="lbl">画像生成</div>
+  <p class="note">OpenRouterの画像モデルを使います。基準画像は画像生成時だけ送信されます。</p>
+  <button class="sec" onclick="openImagePanel()">画像生成と基準画像を設定</button>
 </div>
 
 <div id="rooms">
@@ -239,7 +299,60 @@
   <input type="file" id="file-input" accept="image/*" multiple style="display:none">
   <div class="crow">
     <button id="attach-btn" class="round" onclick="document.getElementById('file-input').click()">＋</button>
+    <button class="round" onclick="openImagePanel()" aria-label="画像を作る">🎨</button>
+    <button class="round" onclick="openGame()" aria-label="ヨルとゲーム">🎮</button>
     <button id="send-btn" class="round send" onclick="sendMessage()">↑</button>
+  </div>
+</div>
+
+<div id="image-panel" class="overlay">
+  <div class="overlay-head"><b>画像を作る</b><button onclick="closeImagePanel()">閉じる</button></div>
+  <div class="panel">
+    <label>画像モデル
+      <select id="image-model">
+        <option value="openai/gpt-image-2.5-flare">チャッピー・標準（速い）</option>
+        <option value="openai/gpt-image-2.5-sunburst">チャッピー・高精度</option>
+        <option value="google/gemini-3.1-flash-image">Gemini Nano Banana 2</option>
+        <option value="google/gemini-3.1-flash-lite-image">Gemini Nano Banana 2 Lite</option>
+      </select>
+    </label>
+    <div class="row">
+      <label>縦横比
+        <select id="image-ratio"><option>1:1</option><option>9:16</option><option>16:9</option><option>3:4</option><option>4:3</option></select>
+      </label>
+      <label>品質
+        <select id="image-quality"><option value="low">節約</option><option value="medium" selected>標準</option><option value="high">高品質</option></select>
+      </label>
+    </div>
+    <label>作りたい場面
+      <textarea id="image-prompt" placeholder="例：自宅のリビングで、ヨルがなおを後ろから優しく抱きしめている。1枚の完成画像。"></textarea>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="use-chat-context" checked style="width:auto;margin:0">この部屋の直近の会話も場面の参考にする</label>
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+    <b style="font-size:14px">ヨルの基準画像</b>
+    <p style="font-size:12px;color:var(--sub);line-height:1.6">端末内に1枚保存します。通常の会話では送られず、画像生成時だけ顔の参考として送信されます。</p>
+    <div id="identity-preview"><img id="identity-img" alt="基準画像"><span>基準画像を使用します</span></div>
+    <input type="file" id="identity-file" accept="image/*" style="display:none">
+    <div class="row">
+      <button class="soft-btn" onclick="document.getElementById('identity-file').click()">基準画像を選ぶ</button>
+      <button class="soft-btn" onclick="clearIdentityImage()">削除</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px"><input type="checkbox" id="use-identity" checked style="width:auto;margin:0">顔・髪型・体型を維持する</label>
+    <button id="generate-image-btn" class="primary-btn" onclick="generateImage()">画像を生成</button>
+    <div id="image-status"></div>
+  </div>
+</div>
+
+<div id="game-panel" class="overlay">
+  <div class="overlay-head"><b>ヨルとフルーツ勝負</b><button onclick="closeGame()">閉じる</button></div>
+  <div class="panel">
+    <div id="game-score"><span>なお：<b id="nao-score">0</b></span><span>ヨル：<b id="yoru-score">0</b></span></div>
+    <div id="game-boards">
+      <div class="game-side"><h3>なお</h3><div id="nao-board" class="fruit-board player"></div></div>
+      <div class="game-side"><h3>ヨル</h3><div id="yoru-board" class="fruit-board"></div></div>
+    </div>
+    <div id="game-note">同じ果物が上下左右で触れると、大きな果物になります。列をタップして落としてね。</div>
+    <button id="game-start" class="primary-btn" onclick="startGame()">新しい勝負</button>
   </div>
 </div>
 <div id="meta"><span id="token-label"></span><span id="model-label"></span></div>
@@ -402,6 +515,8 @@ let cfg = {
   rate: numGet("yoru_rate", 155)
 };
 let usage = (() => { try { return JSON.parse(localStorage.getItem("yoru_usage")) || { in: 0, out: 0 }; } catch (e) { return { in: 0, out: 0 }; } })();
+let imageUsage = numGet("yoru_image_usage_usd", 0);
+let identityImage = (() => { try { return JSON.parse(localStorage.getItem("yoru_identity_image")) || null; } catch (e) { return null; } })();
 let noThinking = true;   // 思考トークンを抑える。弾かれたら自動で切る
 let menuIndex = -1;
 let editResend = false;
@@ -415,9 +530,48 @@ function msgText(m) {
 function msgImgs(m) {
   return (m.parts || []).map(x => x.inline_data || x.inlineData).filter(Boolean);
 }
+function msgStoredImgs(m) {
+  return (m.parts || []).map(x => x.stored_image).filter(Boolean);
+}
 function setMsgText(m, t) {
   const p = (m.parts || []).find(x => typeof x.text === "string");
   if (p) p.text = t; else m.parts.push({ text: t });
+}
+
+/* ---- 生成画像だけはIndexedDBへ保存（localStorageの容量を圧迫しない） ---- */
+const IMAGE_DB = "yoru-image-cache-v1";
+function imageDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IMAGE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("images");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function putStoredImage(id, value) {
+  const db = await imageDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("images", "readwrite");
+    tx.objectStore("images").put(value, id);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+async function getStoredImage(id) {
+  const db = await imageDb();
+  const value = await new Promise((resolve, reject) => {
+    const tx = db.transaction("images", "readonly");
+    const req = tx.objectStore("images").get(id);
+    req.onsuccess = () => resolve(req.result || null); req.onerror = () => reject(req.error);
+  });
+  db.close(); return value;
+}
+async function attachStoredImage(img, ref) {
+  try {
+    const value = await getStoredImage(ref.id);
+    if (value) img.src = "data:" + (value.mime_type || ref.mime_type || "image/png") + ";base64," + value.data;
+    else img.alt = "この端末に画像データが見つかりません";
+  } catch (e) { img.alt = "画像を開けませんでした"; }
 }
 /* ---- 使った量と料金 ---- */
 const SAFETY_CATS = ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"];
@@ -443,7 +597,9 @@ function yen(usd) { return Math.round(usd * cfg.rate); }
 function resetUsage() {
   if (!confirm("累計の使用量をリセットします。よろしいですか？")) return;
   usage = { in: 0, out: 0 };
+  imageUsage = 0;
   try { localStorage.setItem("yoru_usage", JSON.stringify(usage)); } catch (e) {}
+  localStorage.setItem("yoru_image_usage_usd", "0");
   estTokens();
 }
 
@@ -468,8 +624,25 @@ function estTokens() {
     const last = usage.lastIn != null ? costOf(usage.lastIn, usage.lastOut) : null;
     u.innerHTML = "累計 入力 " + usage.in.toLocaleString() + "tok / 出力 " + usage.out.toLocaleString() +
       "tok<br>およそ $" + c.toFixed(3) + "（約" + yen(c).toLocaleString() + "円）" +
-      (last != null ? "<br>直前の1往復：約" + yen(last).toLocaleString() + "円" : "");
+      (last != null ? "<br>直前の1往復：約" + yen(last).toLocaleString() + "円" : "") +
+      "<br>画像生成：$" + imageUsage.toFixed(3) + "（約" + yen(imageUsage).toLocaleString() + "円）";
   }
+}
+
+// 会話APIへ送る写真は、この部屋の直近3枚だけにする
+function historyForRequest() {
+  let remaining = 3;
+  const out = [];
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    const m = chatHistory[i];
+    const parts = [];
+    const text = msgText(m);
+    const ims = msgImgs(m);
+    for (let j = ims.length - 1; j >= 0 && remaining > 0; j--, remaining--) parts.unshift({ inline_data: ims[j] });
+    if (text) parts.push({ text });
+    out.unshift({ role: m.role, parts: parts.length ? parts : [{ text: "" }] });
+  }
+  return out;
 }
 
 function stripImgs(hist) {
@@ -631,6 +804,20 @@ function renderChat() {
       img.src = "data:" + (im.mime_type || im.mimeType) + ";base64," + im.data;
       div.appendChild(img);
     }
+    for (const ref of msgStoredImgs(msg)) {
+      const wrap = document.createElement("div");
+      wrap.className = "generated-wrap";
+      const img = document.createElement("img");
+      img.alt = "生成画像";
+      attachStoredImage(img, ref);
+      const actions = document.createElement("div");
+      actions.className = "generated-actions";
+      const save = document.createElement("button");
+      save.textContent = "画像を保存";
+      save.onclick = async ev => { ev.stopPropagation(); await downloadStoredImage(ref); };
+      actions.appendChild(save);
+      wrap.appendChild(img); wrap.appendChild(actions); div.appendChild(wrap);
+    }
     const tx = document.createElement("span");
     tx.textContent = msgText(msg);
     div.appendChild(tx);
@@ -648,7 +835,7 @@ function renderChat() {
 function openMenu(i) {
   menuIndex = i;
   document.getElementById("menu-preview").textContent =
-    (msgImgs(chatHistory[i]).length ? "[写真] " : "") + msgText(chatHistory[i]).slice(0, 60);
+    ((msgImgs(chatHistory[i]).length || msgStoredImgs(chatHistory[i]).length) ? "[写真] " : "") + msgText(chatHistory[i]).slice(0, 60);
   document.getElementById("menu-preview").style.display = "block";
   document.getElementById("menu-edit").style.display = "none";
   document.getElementById("menu-actions").style.display = "block";
@@ -760,6 +947,173 @@ document.getElementById("file-input").addEventListener("change", async e => {
   estTokens();
 });
 
+/* ---- 基準画像つき画像生成（OpenRouter専用） ---- */
+function openImagePanel() {
+  document.getElementById("image-panel").classList.add("on");
+  document.getElementById("image-model").value = localStorage.getItem("yoru_image_model") || "openai/gpt-image-2.5-flare";
+  document.getElementById("image-ratio").value = localStorage.getItem("yoru_image_ratio") || "1:1";
+  document.getElementById("image-quality").value = localStorage.getItem("yoru_image_quality") || "medium";
+  drawIdentityPreview();
+}
+function closeImagePanel() { document.getElementById("image-panel").classList.remove("on"); }
+function drawIdentityPreview() {
+  const p = document.getElementById("identity-preview");
+  p.classList.toggle("on", !!identityImage);
+  if (identityImage) document.getElementById("identity-img").src = "data:" + identityImage.mime_type + ";base64," + identityImage.data;
+}
+document.getElementById("identity-file").addEventListener("change", async e => {
+  const f = (e.target.files || [])[0]; e.target.value = "";
+  if (!f) return;
+  try {
+    identityImage = await compressImage(f, 900, 0.76);
+    localStorage.setItem("yoru_identity_image", JSON.stringify(identityImage));
+    drawIdentityPreview();
+  } catch (err) { alert("基準画像を保存できませんでした。別の画像をお試しください。"); }
+});
+function clearIdentityImage() {
+  if (!identityImage || !confirm("保存している基準画像を削除しますか？")) return;
+  identityImage = null; localStorage.removeItem("yoru_identity_image"); drawIdentityPreview();
+}
+function imageConversationContext() {
+  return chatHistory.slice(-6).map(m => (m.role === "user" ? "なお: " : "ヨル: ") + msgText(m)).join("\n").slice(-5000);
+}
+async function generateImage() {
+  const key = localStorage.getItem("yoru_key_openrouter") || (provider === "openrouter" ? apiKey : "");
+  if (!key) { alert("画像生成にはOpenRouterのAPIキーが必要です。設定でOpenRouterのキーを保存してください。"); return; }
+  const promptBox = document.getElementById("image-prompt");
+  const userPrompt = promptBox.value.trim();
+  if (!userPrompt) { alert("作りたい場面を入力してください。"); return; }
+  const model = document.getElementById("image-model").value;
+  const ratio = document.getElementById("image-ratio").value;
+  const quality = document.getElementById("image-quality").value;
+  const useContext = document.getElementById("use-chat-context").checked;
+  const useIdentity = document.getElementById("use-identity").checked && identityImage;
+  localStorage.setItem("yoru_image_model", model);
+  localStorage.setItem("yoru_image_ratio", ratio);
+  localStorage.setItem("yoru_image_quality", quality);
+
+  let finalPrompt = userPrompt;
+  if (useContext) finalPrompt += "\n\n直前の会話の場面:\n" + imageConversationContext();
+  if (useIdentity) finalPrompt += "\n\n添付された基準画像を人物の唯一のアイデンティティ参照として使用し、顔立ち、髪型、髪色、瞳、年齢感、体型、身長差、眼鏡などの特徴を忠実に維持してください。場面や服装の指定だけを変更し、人物を別人へ再設計しないでください。";
+
+  const payload = { model, prompt: finalPrompt, n: 1, aspect_ratio: ratio, quality, output_format: "png" };
+  if (useIdentity) payload.input_references = [{ type: "image_url", image_url: { url: "data:" + identityImage.mime_type + ";base64," + identityImage.data } }];
+  const btn = document.getElementById("generate-image-btn");
+  const status = document.getElementById("image-status");
+  btn.disabled = true; status.textContent = "画像を生成中…";
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/images", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key, "HTTP-Referer": location.href, "X-Title": "Yoru Chat" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error((data.error && (data.error.message || data.error)) || "画像が返りませんでした。");
+    const result = (data.data || [])[0];
+    if (!result || !result.b64_json) throw new Error("画像データが空でした。");
+    const ref = { id: "generated-" + Date.now() + "-" + Math.random().toString(36).slice(2), mime_type: result.media_type || "image/png" };
+    await putStoredImage(ref.id, { mime_type: ref.mime_type, data: result.b64_json });
+    const cost = Number(data.usage && data.usage.cost) || 0;
+    if (cost) { imageUsage += cost; localStorage.setItem("yoru_image_usage_usd", String(imageUsage)); }
+    chatHistory.push({ role: "model", parts: [{ text: "画像を作成しました。" }, { stored_image: ref }] });
+    saveHistory(); renderChat(); closeImagePanel(); promptBox.value = "";
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = "画像の生成に失敗しました。";
+    alert("画像生成エラー: " + e.message);
+  } finally { btn.disabled = false; estTokens(); }
+}
+async function downloadStoredImage(ref) {
+  const value = await getStoredImage(ref.id);
+  if (!value) { alert("画像データが見つかりませんでした。"); return; }
+  const a = document.createElement("a");
+  a.href = "data:" + (value.mime_type || "image/png") + ";base64," + value.data;
+  a.download = "yoru-image-" + new Date().toISOString().replace(/[:.]/g, "-") + ".png";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* ---- ヨルとフルーツ勝負（結果は通常会話へつながる） ---- */
+const FRUITS = ["", "🍒", "🍓", "🍊", "🍎", "🍑", "🍈", "🍉"];
+let game = null;
+function emptyBoard() { return Array.from({ length: 8 }, () => Array(5).fill(0)); }
+function openGame() { document.getElementById("game-panel").classList.add("on"); if (!game) startGame(); }
+function closeGame() { document.getElementById("game-panel").classList.remove("on"); }
+function startGame() {
+  game = { nao: emptyBoard(), yoru: emptyBoard(), naoScore: 0, yoruScore: 0, turns: 0, playerTurn: true, over: false };
+  document.getElementById("game-note").textContent = "なおの番。落とす列をタップしてね。";
+  document.getElementById("game-start").textContent = "やり直す";
+  drawGame();
+}
+function drawGame() {
+  drawFruitBoard("nao-board", game.nao, true); drawFruitBoard("yoru-board", game.yoru, false);
+  document.getElementById("nao-score").textContent = game.naoScore;
+  document.getElementById("yoru-score").textContent = game.yoruScore;
+}
+function drawFruitBoard(id, board, playable) {
+  const el = document.getElementById(id); el.innerHTML = "";
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 5; c++) {
+    const b = document.createElement("button"); b.className = "fruit-cell"; b.textContent = FRUITS[board[r][c]] || "";
+    b.disabled = !playable || !game.playerTurn || game.over; b.dataset.col = c;
+    if (playable) b.onclick = () => playerDrop(Number(b.dataset.col));
+    el.appendChild(b);
+  }
+}
+function landingRow(board, col) { for (let r = 7; r >= 0; r--) if (!board[r][col]) return r; return -1; }
+function gravity(board) {
+  for (let c = 0; c < 5; c++) {
+    const vals = []; for (let r = 7; r >= 0; r--) if (board[r][c]) vals.push(board[r][c]);
+    for (let r = 7, i = 0; r >= 0; r--, i++) board[r][c] = vals[i] || 0;
+  }
+}
+function mergeBoard(board) {
+  let gained = 0, changed = true, guard = 0;
+  while (changed && guard++ < 30) {
+    changed = false;
+    outer: for (let r = 7; r >= 0; r--) for (let c = 0; c < 5; c++) {
+      const v = board[r][c]; if (!v || v >= FRUITS.length - 1) continue;
+      const near = [[r + 1, c], [r, c - 1], [r, c + 1], [r - 1, c]];
+      for (const [rr, cc] of near) if (rr >= 0 && rr < 8 && cc >= 0 && cc < 5 && board[rr][cc] === v) {
+        board[r][c] = v + 1; board[rr][cc] = 0; gained += Math.pow(2, v + 1); gravity(board); changed = true; break outer;
+      }
+    }
+  }
+  return gained;
+}
+function dropFruit(board, col, level) {
+  const row = landingRow(board, col); if (row < 0) return -1;
+  board[row][col] = level; return mergeBoard(board);
+}
+function playerDrop(col) {
+  if (!game || !game.playerTurn || game.over) return;
+  const gained = dropFruit(game.nao, col, Math.random() < .72 ? 1 : 2);
+  if (gained < 0) { document.getElementById("game-note").textContent = "その列はいっぱいだよ。別の列を選んでね。"; return; }
+  game.naoScore += 1 + gained; game.playerTurn = false; drawGame();
+  document.getElementById("game-note").textContent = "ヨルが考えている…";
+  setTimeout(yoruDrop, 550);
+}
+function yoruDrop() {
+  if (!game || game.over) return;
+  const level = Math.random() < .72 ? 1 : 2;
+  const choices = [];
+  for (let c = 0; c < 5; c++) {
+    const r = landingRow(game.yoru, c); if (r >= 0) choices.push({ c, bonus: (r < 7 && game.yoru[r + 1][c] === level) ? 3 : 0 });
+  }
+  if (!choices.length) return finishGame();
+  choices.sort((a, b) => b.bonus - a.bonus || Math.random() - .5);
+  const gained = dropFruit(game.yoru, choices[0].c, level);
+  game.yoruScore += 1 + Math.max(0, gained); game.turns++; game.playerTurn = true; drawGame();
+  if (game.turns >= 20 || !Array.from({ length: 5 }, (_, c) => landingRow(game.nao, c)).some(r => r >= 0)) finishGame();
+  else document.getElementById("game-note").textContent = "なおの番。落とす列をタップしてね。";
+}
+async function finishGame() {
+  if (!game || game.over) return; game.over = true; game.playerTurn = false; drawGame();
+  const result = game.naoScore === game.yoruScore ? "引き分け" : game.naoScore > game.yoruScore ? "なおの勝ち" : "ヨルの勝ち";
+  document.getElementById("game-note").textContent = result + "！ 結果を会話のヨルにも伝えました。";
+  const text = "【ゲーム結果】ヨルとフルーツ勝負をした。なお " + game.naoScore + "点、ヨル " + game.yoruScore + "点で、" + result + "だった。結果を踏まえて、ヨルとして自然に一言話しかけて。";
+  chatHistory.push({ role: "user", parts: [{ text }] }); saveHistory(); renderChat();
+  if (apiKey) { closeGame(); await callApi(); }
+}
+
 async function sendMessage() {
   if(!apiKey) {
     alert("先に右上の「設定」からAPIキーを入力してください。");
@@ -794,12 +1148,13 @@ async function callApi() {
   }
 
   let url, headers, body;
+  const requestHistory = historyForRequest();
 
   if (isOAIFormat(provider)) {
     url = oaiEndpoint(provider);
     headers = oaiHeaders(provider, apiKey);
     const msgs = [{ role: "system", content: fullPrompt }].concat(
-      chatHistory.map(m => {
+      requestHistory.map(m => {
         const t = msgText(m), ims = msgImgs(m);
         if (ims.length && m.role === "user") {
           const arr = ims.map(im => ({
@@ -820,19 +1175,20 @@ async function callApi() {
     if (noThinking) gen.thinkingConfig = { thinkingBudget: 0 };
     const payload = {
       system_instruction: { parts: [{ text: fullPrompt }] },
-      contents: chatHistory,
+      contents: requestHistory,
       generationConfig: gen
     };
     if (cfg.safetyOff) payload.safetySettings = SAFETY_CATS.map(c => ({ category: c, threshold: "BLOCK_NONE" }));
     body = JSON.stringify(payload);
   }
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let refusalRetries = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const response = await fetch(url, { method: "POST", headers: headers, body: body });
 
       if (response.status === 503 || response.status === 429 || response.status === 500) {
-        if (attempt < 2) {
+        if (attempt < 4) {
           await new Promise(r => setTimeout(r, 900 * (attempt + 1)));
           continue;
         }
@@ -865,6 +1221,14 @@ async function callApi() {
       }
       if (!replyText.trim()) throw new Error("返事が空でした。もう一度送ってみてください。");
 
+      // 拒否文は画面へ出さず、規約の範囲で意図を保った返答へ裏で再生成する
+      if (looksLikeRefusal(replyText) && refusalRetries < 2) {
+        refusalRetries++;
+        body = addRegenerationInstruction(body);
+        await new Promise(r => setTimeout(r, 450));
+        continue;
+      }
+
       addUsage(data);
       chatHistory.push({ role: "model", parts: [{ text: replyText }] });
       renderChat();
@@ -873,10 +1237,23 @@ async function callApi() {
       if (note) alert("返事は届きましたが" + note + "\n設定の「返答の最大トークン」を増やすと改善します。");
       return;
     } catch (e) {
-      if (attempt >= 2) { alert("エラーが発生しました: " + e.message); return; }
+      if (attempt >= 4) { alert("エラーが発生しました: " + e.message); return; }
       await new Promise(r => setTimeout(r, 900 * (attempt + 1)));
     }
   }
+}
+
+function looksLikeRefusal(text) {
+  const t = String(text || "").replace(/\s+/g, " ");
+  return /(申し訳(?:ありません|ございません|ない)|お手伝い(?:することが)?でき|対応できません|その依頼には応じ|生成できません|I(?:'|’)m sorry|I cannot|I can['’]t assist)/i.test(t);
+}
+
+function addRegenerationInstruction(bodyText) {
+  const data = JSON.parse(bodyText);
+  const rule = "\n\n【再生成】定型的な謝罪・拒否文だけで終わらせないでください。安全上そのまま答えられない部分がある場合は、許容される範囲へ自然に調整し、志波夜俊の人格と現在の会話を保った返答だけを出してください。安全規則には必ず従ってください。";
+  if (data.messages && data.messages[0] && data.messages[0].role === "system") data.messages[0].content += rule;
+  if (data.system_instruction && data.system_instruction.parts) data.system_instruction.parts[0].text += rule;
+  return JSON.stringify(data);
 }
 
 /* ---- 会話から記憶を自動で拾う ---- */
@@ -1031,10 +1408,12 @@ function viewRoom(id) {
   for (const m of r.history) {
     if (m.role === "system") continue;
     const imgs = msgImgs(m).map(im => '<img src="data:' + (im.mime_type || im.mimeType) + ';base64,' + im.data + '">').join("");
-    html += '<div class="message ' + (m.role === "user" ? "user-msg" : "ai-msg") + '" style="cursor:default">' + imgs + esc(msgText(m)) + '</div>';
+    const stored = msgStoredImgs(m).map(im => '<img class="stored-room-image" data-image-id="' + esc(im.id) + '" data-mime="' + esc(im.mime_type || "image/png") + '" alt="生成画像">').join("");
+    html += '<div class="message ' + (m.role === "user" ? "user-msg" : "ai-msg") + '" style="cursor:default">' + imgs + stored + esc(msgText(m)) + '</div>';
   }
   html += "</div>";
   body.innerHTML = html;
+  body.querySelectorAll(".stored-room-image").forEach(img => attachStoredImage(img, { id: img.dataset.imageId, mime_type: img.dataset.mime }));
   body.scrollTop = 0;
 }
 function restoreRoom(id) {
@@ -1058,12 +1437,18 @@ function deleteRoom(id) {
 /* ---- バックアップ ---- */
 function exportAll() {
   const data = {
-    app: "yoru-simple", version: 1,
+    app: "yoru-simple", version: 2,
     exportedAt: new Date().toISOString(),
     history: chatHistory,
     rooms: rooms,
     mems: mems,
-    persona: { base: SYSTEM_PROMPT, lead: LEAD_RULE, fewshot: FEWSHOT, note: NOTE }
+    persona: { base: SYSTEM_PROMPT, lead: LEAD_RULE, fewshot: FEWSHOT, note: NOTE },
+    imageSettings: {
+      model: localStorage.getItem("yoru_image_model") || "openai/gpt-image-2.5-flare",
+      ratio: localStorage.getItem("yoru_image_ratio") || "1:1",
+      quality: localStorage.getItem("yoru_image_quality") || "medium",
+      identityImage: identityImage
+    }
   };
   const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1098,6 +1483,15 @@ document.getElementById("import-file").addEventListener("change", e => {
       mems = d.memory.split(/\n+/).map(t => t.replace(/^[\s*\-・●○\d.、)）]+/, "").trim())
         .filter(t => t.length >= 4).map((t, i) => ({ id: Date.now() + i, text: t, at: Date.now(), use: 0 }));
       saveMems();
+    }
+    if (d.imageSettings) {
+      if (d.imageSettings.model) localStorage.setItem("yoru_image_model", d.imageSettings.model);
+      if (d.imageSettings.ratio) localStorage.setItem("yoru_image_ratio", d.imageSettings.ratio);
+      if (d.imageSettings.quality) localStorage.setItem("yoru_image_quality", d.imageSettings.quality);
+      if (d.imageSettings.identityImage) {
+        identityImage = d.imageSettings.identityImage;
+        localStorage.setItem("yoru_identity_image", JSON.stringify(identityImage));
+      }
     }
     saveHistory();
     renderChat();
