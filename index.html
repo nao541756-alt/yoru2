@@ -283,7 +283,7 @@
   <button class="sec" onclick="resetUsage()">累計をリセット</button>
   <hr>
   <div class="lbl">画像生成</div>
-  <p class="note">会話欄で「画像を作って」「画像にして」と送っても作れます。「画面生成」と書いた場合も画像生成として扱います。関係する記憶・過去の部屋・直近の会話だけを参考にします。基準画像は画像生成時だけ送信されます。</p>
+  <p class="note">会話欄で「画像を作って」「画像にして」と送っても作れます。「画面生成」と書いた場合も画像生成として扱います。関係する記憶・過去の部屋・直近の会話だけを参考にし、成人向けの会話は画像用の参考文から除外します。基準画像は画像生成時だけ送信されます。</p>
   <button class="sec" onclick="openImagePanel()">画像生成と基準画像を設定</button>
 </div>
 
@@ -986,8 +986,23 @@ function clearIdentityImage() {
   if (!identityImage || !confirm("保存している基準画像を削除しますか？")) return;
   identityImage = null; localStorage.removeItem("yoru_identity_image"); drawIdentityPreview();
 }
+// 画像生成へ渡す参考会話から、成人向けの描写とツール用JSONだけを除く。
+// 元の会話・記憶は変更せず、画像APIへ送る一時的な文章だけを整える。
+function safeImageContextText(text) {
+  const sensitive = /(?:性行為|性的な行為|性交|セックス|お?営み|お致し|挿入|射精|絶頂|オーガズム|自慰|愛撫|前戯|後戯|喘ぎ|嬌声|乳首|乳房|陰部|性器|秘部|股間|勃起|全裸|裸身|下着姿|脱が(?:す|せ|した)|舐め(?:る|た)|腰を.{0,8}(?:動か|打ち)|\b(?:sex|sexual|intercourse|penetration|orgasm|masturbat\w*|nude|naked|topless|breasts?|nipples?|genitals?|penis|vagina|erotic|nsfw|lingerie)\b)/i;
+  return String(text || "")
+    .replace(/([。！？!?])/g, "$1\n")
+    .split(/\n+/)
+    .map(s => s.trim())
+    .filter(s => s && !sensitive.test(s) && !/(?:"action"\s*:|action_input|dalle\.text2im|画像を生成中|画像の生成に失敗)/i.test(s))
+    .join("\n");
+}
+
 function imageConversationContext() {
-  return chatHistory.slice(-6).map(m => (m.role === "user" ? "なお: " : "ヨル: ") + msgText(m)).join("\n").slice(-5000);
+  return chatHistory.slice(-8).map(m => {
+    const safe = safeImageContextText(msgText(m));
+    return safe ? (m.role === "user" ? "なお: " : "ヨル: ") + safe : "";
+  }).filter(Boolean).join("\n").slice(-5000);
 }
 
 // 「画像を作って」など、明示された時だけ通常の会話から画像生成へ切り替える。
@@ -1007,26 +1022,29 @@ function imageMemoryContext(queryText) {
   const broad = isPastConversationRequest(queryText);
   const chosen = [];
 
-  const memoryHits = mems.map((m, i) => ({
-    text: "記憶: " + m.text,
-    score: relScore(q, m.text) + (broad ? Math.max(0, 0.12 - i * 0.002) : 0)
-  })).sort((a, b) => b.score - a.score)
+  const memoryHits = mems.map((m, i) => {
+    const safe = safeImageContextText(m.text);
+    return safe ? {
+      text: "記憶: " + safe,
+      score: relScore(q, safe) + (broad ? Math.max(0, 0.12 - i * 0.002) : 0)
+    } : null;
+  }).filter(Boolean).sort((a, b) => b.score - a.score)
     .filter(x => x.score > 0.03 || broad).slice(0, 8);
   chosen.push(...memoryHits);
 
   const roomHits = [];
   rooms.slice(0, 40).forEach((room, roomIndex) => {
-    const summaryText = [room.title || "", room.summary || ""].filter(Boolean).join(" / ");
+    const summaryText = safeImageContextText([room.title || "", room.summary || ""].filter(Boolean).join(" / "));
     if (summaryText) {
       roomHits.push({
         text: "過去の部屋（" + (room.title || "無題") + "）: " + summaryText,
         score: relScore(q, summaryText) + (broad ? Math.max(0, 0.18 - roomIndex * 0.004) : 0)
       });
     }
-    const hist = (room.history || []).filter(m => msgText(m));
+    const hist = (room.history || []).map(m => ({ role: m.role, safeText: safeImageContextText(msgText(m)) })).filter(m => m.safeText);
     for (let i = 0; i < hist.length; i++) {
       const pair = hist.slice(Math.max(0, i - 1), Math.min(hist.length, i + 2));
-      const text = pair.map(m => (m.role === "user" ? "なお: " : "ヨル: ") + msgText(m)).join("\n");
+      const text = pair.map(m => (m.role === "user" ? "なお: " : "ヨル: ") + m.safeText).join("\n");
       const score = relScore(q, text);
       if (score > 0.035) roomHits.push({ text: "過去の会話:\n" + text, score: score + Math.max(0, 0.04 - roomIndex * 0.001) });
     }
@@ -1068,9 +1086,11 @@ async function requestGeneratedImage(userPrompt, options) {
   localStorage.setItem("yoru_image_quality", quality);
 
   let finalPrompt = userPrompt;
-  if (useContext) finalPrompt += "\n\n直前の会話の場面:\n" + imageConversationContext();
+  const currentContext = useContext ? imageConversationContext() : "";
+  if (currentContext) finalPrompt += "\n\n直前の会話の場面（非性的な視覚情報のみ）:\n" + currentContext;
   const remembered = imageMemoryContext(userPrompt);
   if (remembered) finalPrompt += "\n\n保存された記憶と過去の会話から、今回の依頼に関係する内容:\n" + remembered + "\n\n上の記録にない細部は自然に補い、矛盾する場合は今回の依頼を優先してください。";
+  finalPrompt += "\n\n登場人物はすべて成人です。過去の会話からは、場所、服装、表情、雰囲気、健全な抱擁など、今回の画像に必要な非性的な視覚情報だけを使用してください。";
   if (useIdentity) finalPrompt += "\n\n添付された基準画像を人物の唯一のアイデンティティ参照として使用し、顔立ち、髪型、髪色、瞳、年齢感、体型、身長差、眼鏡などの特徴を忠実に維持してください。場面や服装の指定だけを変更し、人物を別人へ再設計しないでください。";
 
   const payload = { model, prompt: finalPrompt, n: 1, aspect_ratio: ratio, quality, output_format: "png" };
