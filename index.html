@@ -283,7 +283,7 @@
   <button class="sec" onclick="resetUsage()">累計をリセット</button>
   <hr>
   <div class="lbl">画像生成</div>
-  <p class="note">会話欄で「画像を作って」「画像にして」と送っても作れます。関係する記憶・過去の部屋・直近の会話だけを参考にします。基準画像は画像生成時だけ送信されます。</p>
+  <p class="note">会話欄で「画像を作って」「画像にして」と送っても作れます。「画面生成」と書いた場合も画像生成として扱います。関係する記憶・過去の部屋・直近の会話だけを参考にします。基準画像は画像生成時だけ送信されます。</p>
   <button class="sec" onclick="openImagePanel()">画像生成と基準画像を設定</button>
 </div>
 
@@ -869,13 +869,17 @@ async function applyEdit() {
   if (!t) { alert("内容を入力してください"); return; }
   const i = menuIndex;
   setMsgText(chatHistory[i], t);
+  const editedImages = msgImgs(chatHistory[i]).slice();
   if (editResend) {
     chatHistory.splice(i + 1);
   }
   saveHistory();
   renderChat();
   closeMenu();
-  if (editResend) await callApi();
+  if (editResend) {
+    if (isImageCreationRequest(t)) await generateImageFromChat(t, editedImages);
+    else await callApi();
+  }
 }
 
 function closeMenu() {
@@ -989,6 +993,7 @@ function imageConversationContext() {
 // 「画像を作って」など、明示された時だけ通常の会話から画像生成へ切り替える。
 function isImageCreationRequest(text) {
   const t = String(text || "").replace(/\s+/g, " ");
+  if (/(?:画面生成|画面を生成)(?:して|してみて|してほしい|して欲しい|してください|お願い)?/i.test(t)) return true;
   return /(?:画像|イラスト|絵|ビジュアル|写真).{0,24}(?:作って|作成して|生成して|描いて|画像化して|見せて)|(?:作って|作成して|生成して|描いて).{0,18}(?:画像|イラスト|絵|写真)|(?:画像|イラスト|絵|写真)(?:に|へ)(?:して|起こして)/i.test(t);
 }
 
