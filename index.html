@@ -439,6 +439,35 @@ function oaiHeaders(p, key) {
   return h;
 }
 
+// OpenRouterには画像を読めない文章専用モデルもある。
+// 既知のモデルは最初から画像を外し、未知のモデルもOpenRouterのエラーを受けたら
+// その端末に記憶して、次回から文章だけを送る。
+const KNOWN_TEXT_ONLY_OPENROUTER_MODELS = new Set([
+  "thedrummer/cydonia-24b-v4.1",
+  "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+  "sao10k/l3-lunaris-8b",
+  "minimax/minimax-m2-her"
+]);
+let learnedTextOnlyOpenRouterModels = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem("yoru_openrouter_text_only_models") || "[]");
+    return new Set(Array.isArray(v) ? v.map(x => String(x).toLowerCase()) : []);
+  } catch (e) { return new Set(); }
+})();
+function isTextOnlyOpenRouterModel(name) {
+  const id = String(name || "").trim().toLowerCase();
+  return KNOWN_TEXT_ONLY_OPENROUTER_MODELS.has(id) || learnedTextOnlyOpenRouterModels.has(id);
+}
+function rememberTextOnlyOpenRouterModel(name) {
+  const id = String(name || "").trim().toLowerCase();
+  if (!id) return;
+  learnedTextOnlyOpenRouterModels.add(id);
+  try {
+    localStorage.setItem("yoru_openrouter_text_only_models", JSON.stringify([...learnedTextOnlyOpenRouterModels]));
+  } catch (e) {}
+  estTokens();
+}
+
 function loadCreds() {
   apiKey = localStorage.getItem("yoru_key_" + provider) || "";
   modelName = localStorage.getItem("yoru_model_" + provider) || DEFAULT_MODEL[provider];
@@ -615,10 +644,11 @@ function estTokens() {
   const typing = (document.getElementById("user-input") || {}).value || "";
   const recentTxt = chatHistory.slice(-4).map(m => msgText(m)).join(" ") + " " + typing;
   const mem = pickMems(recentTxt).map(m => "・" + m.text).join("\n");
+  const countChatImages = !(provider === "openrouter" && isTextOnlyOpenRouterModel(modelName));
   let hist = 0;
-  for (const m of chatHistory) hist += tok(msgText(m)) + msgImgs(m).length * 260;
+  for (const m of chatHistory) hist += tok(msgText(m)) + (countChatImages ? msgImgs(m).length * 260 : 0);
   const total = tok(SYSTEM_PROMPT) + tok(LEAD_RULE) + tok(FEWSHOT) + tok(NOTE) + tok(mem)
-    + hist + tok(typing) + pendingImgs.length * 260;
+    + hist + tok(typing) + (countChatImages ? pendingImgs.length * 260 : 0);
   if (el) {
     const totalYen = yen(costOf(usage.in, usage.out));
     el.textContent = "送信 約" + total.toLocaleString() + "tok ・ 累計 約" + totalYen.toLocaleString() + "円";
@@ -1288,15 +1318,18 @@ async function callApi() {
   }
 
   let url, headers, body;
+  let sentImagesToModel = false;
   const requestHistory = historyForRequest();
 
   if (isOAIFormat(provider)) {
     url = oaiEndpoint(provider);
     headers = oaiHeaders(provider, apiKey);
+    const allowImages = !(provider === "openrouter" && isTextOnlyOpenRouterModel(modelName));
     const msgs = [{ role: "system", content: fullPrompt }].concat(
       requestHistory.map(m => {
         const t = msgText(m), ims = msgImgs(m);
-        if (ims.length && m.role === "user") {
+        if (allowImages && ims.length && m.role === "user") {
+          sentImagesToModel = true;
           const arr = ims.map(im => ({
             type: "image_url",
             image_url: { url: "data:" + (im.mime_type || im.mimeType) + ";base64," + im.data }
@@ -1304,7 +1337,10 @@ async function callApi() {
           if (t) arr.push({ type: "text", text: t });
           return { role: "user", content: arr };
         }
-        return { role: m.role === "user" ? "user" : "assistant", content: t || "[写真]" };
+        const omittedImageNote = ims.length && m.role === "user"
+          ? "[画像添付あり・文章専用モデルのため画像データは省略]"
+          : "[写真]";
+        return { role: m.role === "user" ? "user" : "assistant", content: t || omittedImageNote };
       })
     );
     body = JSON.stringify({ model: modelName, messages: msgs, temperature: 0.9, max_completion_tokens: Number(cfg.maxTok) });
@@ -1338,6 +1374,12 @@ async function callApi() {
       const data = await response.json();
       if (data.error) {
         const em = data.error.message || "";
+        // 未登録の文章専用モデルだった場合も、画像なしへ自動で切り替えて再送する。
+        if (provider === "openrouter" && sentImagesToModel &&
+            /no endpoints found[^.]*support image input|image input[^.]*not support/i.test(em)) {
+          rememberTextOnlyOpenRouterModel(modelName);
+          return callApi();
+        }
         // 思考オフに対応しないモデルなら、その指定を外して一度だけやり直す
         if (noThinking && /thinking/i.test(em)) { noThinking = false; return callApi(); }
         throw new Error(em);
