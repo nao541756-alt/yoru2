@@ -1343,7 +1343,7 @@ async function callApi() {
         return { role: m.role === "user" ? "user" : "assistant", content: t || omittedImageNote };
       })
     );
-    body = JSON.stringify({ model: modelName, messages: msgs, temperature: 0.9, max_completion_tokens: Number(cfg.maxTok) });
+    body = JSON.stringify({ model: modelName, messages: msgs, max_completion_tokens: Number(cfg.maxTok) });
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
@@ -1444,7 +1444,7 @@ async function askModel(promptText, temp) {
   if (isOAIFormat(provider)) {
     url = oaiEndpoint(provider);
     headers = oaiHeaders(provider, apiKey);
-    body = JSON.stringify({ model: modelName, messages: [{ role: "user", content: promptText }], temperature: temp });
+    body = JSON.stringify({ model: modelName, messages: [{ role: "user", content: promptText }] });
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
@@ -1512,8 +1512,7 @@ async function newRoom() {
       sHeaders = oaiHeaders(provider, apiKey);
       sBody = JSON.stringify({
         model: modelName,
-        messages: summaryPrompt.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: msgText(m) })),
-        temperature: 0.3
+        messages: summaryPrompt.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: msgText(m) }))
       });
     } else {
       sUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
