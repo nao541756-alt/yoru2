@@ -1347,8 +1347,8 @@ async function callApi() {
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
-    const gen = { temperature: 0.9, maxOutputTokens: Number(cfg.maxTok) };
-    if (noThinking) gen.thinkingConfig = { thinkingBudget: 0 };
+    const gen = { maxOutputTokens: Number(cfg.maxTok) };
+    if (noThinking) gen.thinkingConfig = { thinkingLevel: "minimal" };
     const payload = {
       system_instruction: { parts: [{ text: fullPrompt }] },
       contents: requestHistory,
@@ -1448,8 +1448,8 @@ async function askModel(promptText, temp) {
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
-    const gen = { temperature: temp };
-    if (noThinking) gen.thinkingConfig = { thinkingBudget: 0 };
+    const gen = {};
+    if (noThinking) gen.thinkingConfig = { thinkingLevel: "minimal" };
     const p = { contents: [{ role: "user", parts: [{ text: promptText }] }], generationConfig: gen };
     if (cfg.safetyOff) p.safetySettings = SAFETY_CATS.map(c => ({ category: c, threshold: "BLOCK_NONE" }));
     body = JSON.stringify(p);
@@ -1518,7 +1518,7 @@ async function newRoom() {
     } else {
       sUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
       sHeaders = { "Content-Type": "application/json" };
-      sBody = JSON.stringify({ contents: summaryPrompt, generationConfig: { temperature: 0.3 } });
+      sBody = JSON.stringify({ contents: summaryPrompt });
     }
     const response = await fetch(sUrl, { method: "POST", headers: sHeaders, body: sBody });
     const data = await response.json();
