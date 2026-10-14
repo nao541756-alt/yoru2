@@ -201,6 +201,7 @@
 <div id="header">
   <div class="hactions">
     <button class="hbtn" onclick="toggleKeyInput()">設定</button>
+    <button class="hbtn" id="novel-room-btn" onclick="openNovelPanel()">小説部屋</button>
     <button class="hbtn" onclick="newRoom()">新しい部屋</button>
   </div>
 </div>
@@ -214,8 +215,9 @@
   </select>
   <p class="note" id="prov-hint"></p>
   <input type="password" id="api-key-input" placeholder="APIキーを入力">
-  <input type="text" id="model-input" list="model-presets" placeholder="モデル名">
+  <input type="text" id="model-input" list="model-presets" placeholder="モデル名" oninput="updateThinkingOptions()">
   <datalist id="model-presets">
+    <option value="google/gemini-4-argon"></option>
     <option value="google/gemini-3.7-flash"></option>
     <option value="google/gemini-3-flash-preview"></option>
     <option value="google/gemini-3.8-flash"></option>
@@ -226,6 +228,7 @@
     <option value="anthropic/claude-sonnet-4.5"></option>
     <option value="x-ai/grok-4"></option>
     <option value="mistralai/mistral-small-2603"></option>
+    <option value="gemini-4-argon"></option>
     <option value="gemini-3.7-flash"></option>
     <option value="gemini-3-flash-preview"></option>
   </datalist>
@@ -259,7 +262,17 @@
   <label class="chk"><input type="checkbox" id="safety-input"> 安全フィルタを緩める（Geminiのみ）</label>
   <div class="grid">
     <label>返答の最大トークン<input type="number" id="maxtok-input" min="256" step="256"></label>
+    <label>思考レベル
+      <select id="thinking-level-input" onchange="updateThinkingHint()">
+        <option value="auto">自動</option>
+        <option value="minimal">最小</option>
+        <option value="low">低</option>
+        <option value="medium">中</option>
+        <option value="high">高</option>
+      </select>
+    </label>
   </div>
+  <p class="note" id="thinking-hint"></p>
   <hr>
   <div class="lbl">記憶</div>
   <div id="mem-line" style="font-size:12px;color:#6b7688"></div>
@@ -306,6 +319,48 @@
     <button class="round" onclick="openGame()" aria-label="ヨルとゲーム">🎮</button>
     <button class="round" onclick="toggleKeyInput()" aria-label="設定">⚙️</button>
     <button id="send-btn" class="round send" onclick="sendMessage()">↑</button>
+  </div>
+</div>
+
+<div id="novel-panel" class="overlay">
+  <div class="overlay-head"><b>小説部屋の設定</b><button onclick="closeNovelPanel()">閉じる</button></div>
+  <div class="panel">
+    <p class="note" style="margin-top:0;color:#6b7688;line-height:1.7">この設定は小説部屋ごとに保存されます。通常のヨルの人格や会話の記憶は変更しません。</p>
+    <label>小説のタイトル
+      <input id="novel-title" type="text" placeholder="例：白衣の向こう側">
+    </label>
+    <label>この小説でのヨルの設定
+      <textarea id="novel-yoru" placeholder="年齢、職業、性格、口調、立場など。別人・別職業の設定でも大丈夫です"></textarea>
+    </label>
+    <label>この小説でのなおの設定
+      <textarea id="novel-nao" placeholder="年齢、職業、性格、立場など"></textarea>
+    </label>
+    <label>二人の関係
+      <textarea id="novel-relation" placeholder="例：両片想い、夫婦、医師と家政婦、初対面など"></textarea>
+    </label>
+    <label>舞台・世界観
+      <textarea id="novel-world" placeholder="時代、場所、現在の状況など"></textarea>
+    </label>
+    <div class="row">
+      <label>視点
+        <select id="novel-view">
+          <option value="三人称">三人称</option>
+          <option value="なお一人称">なお一人称</option>
+          <option value="ヨル一人称">ヨル一人称</option>
+        </select>
+      </label>
+      <label>1回の長さ（字）
+        <input id="novel-length" type="number" min="500" max="20000" step="500" value="5000">
+      </label>
+    </div>
+    <label>文体・雰囲気
+      <textarea id="novel-style" placeholder="例：心理描写を丁寧に、会話多め、落ち着いた恋愛小説"></textarea>
+    </label>
+    <label>追加ルール
+      <textarea id="novel-extra" placeholder="この作品だけで守ってほしいこと"></textarea>
+    </label>
+    <button class="primary-btn" id="novel-apply-btn" onclick="applyNovelSettings()">今の小説に設定を反映</button>
+    <button class="primary-btn" style="margin-top:10px;background:#5b6779" onclick="createNovelRoom()">新しい小説部屋を作る</button>
   </div>
 </div>
 
@@ -410,6 +465,23 @@ const DEF_FEWSHOT = `
 
 【型ここまで。例文の内容そのものは会話に持ち込まず、構成・改行・主導のしかただけを真似ること】`;
 
+const DEF_NOVEL_CONFIG = {
+  title: "新しい小説",
+  yoru: "志波夜俊。44歳、184cm。知的で落ち着いた成人男性。普段は冷静で厳格だが、なおには深い愛情と包容力を見せる。一人称は『私』。",
+  nao: "なお。成人女性。物語の中心人物の一人。",
+  relation: "二人の関係は自由に設定する。下の指定を最優先する。",
+  world: "現代日本。指定された場面を自然に補完する。",
+  view: "三人称",
+  length: 5000,
+  style: "情景と心理を丁寧に描く大人向けの恋愛小説。会話と地の文のバランスを取り、同じ表現を繰り返さない。",
+  extra: ""
+};
+function freshNovelConfig() { return JSON.parse(JSON.stringify(DEF_NOVEL_CONFIG)); }
+function readNovelConfig(raw) {
+  try { return Object.assign(freshNovelConfig(), typeof raw === "string" ? JSON.parse(raw) : (raw || {})); }
+  catch (e) { return freshNovelConfig(); }
+}
+
 /* ---- 人格まわり（設定画面から編集できる） ---- */
 const getTxt = (k, d) => { const v = localStorage.getItem(k); return v === null ? d : v; };
 let SYSTEM_PROMPT = getTxt("yoru_persona", DEF_PERSONA);
@@ -436,6 +508,47 @@ function oaiHeaders(p, key) {
   // Fetch のヘッダー値には日本語を直接入れられないため、ASCII のアプリ名を使う。
   if (p === "openrouter") { h["HTTP-Referer"] = location.href; h["X-Title"] = "Yoru Chat"; }
   return h;
+}
+
+/* ---- Geminiの思考レベル（モデルごとに対応値だけを使う） ---- */
+function bareModelId(name) { return String(name || "").trim().toLowerCase().replace(/^google\//, ""); }
+function supportedThinkingLevels(name) {
+  const id = bareModelId(name);
+  if (/gemini-4-argon|gemini-3\.(8|7)-flash|gemini-3\.1-pro|gemini-2\.5-(pro|flash)/.test(id)) return ["low", "medium", "high"];
+  if (/gemini-3\.(6|5)-flash(?!-lite)|gemini-3-flash-preview|gemini-3\.5-flash-lite|gemini-3\.1-flash-lite(?!-image)/.test(id)) return ["minimal", "low", "medium", "high"];
+  if (/gemini-3\.1-flash-lite-image/.test(id)) return ["minimal", "high"];
+  if (/gemini-3-pro-preview/.test(id)) return ["low", "high"];
+  return [];
+}
+function thinkingLabel(v) { return ({ auto: "自動", minimal: "最小", low: "低", medium: "中", high: "高" })[v] || v; }
+function updateThinkingOptions() {
+  const sel = document.getElementById("thinking-level-input");
+  if (!sel) return;
+  const p = (document.getElementById("provider-input") || {}).value || provider;
+  const typed = (document.getElementById("model-input") || {}).value || modelName;
+  const levels = p === "gemini" ? supportedThinkingLevels(typed) : [];
+  [...sel.options].forEach(o => { o.disabled = o.value !== "auto" && !levels.includes(o.value); });
+  if (p !== "gemini") sel.value = "auto";
+  else if (levels.length && sel.value !== "auto" && !levels.includes(sel.value)) sel.value = levels.includes("low") ? "low" : "auto";
+  updateThinkingHint();
+}
+function updateThinkingHint() {
+  const hint = document.getElementById("thinking-hint");
+  const sel = document.getElementById("thinking-level-input");
+  if (!hint || !sel) return;
+  const p = (document.getElementById("provider-input") || {}).value || provider;
+  const typed = (document.getElementById("model-input") || {}).value || modelName;
+  const levels = p === "gemini" ? supportedThinkingLevels(typed) : [];
+  hint.textContent = p !== "gemini"
+    ? "この欄はGoogle Geminiを直接使うときだけ反映されます。"
+    : levels.length
+      ? "このモデルで選べる値：" + levels.map(thinkingLabel).join("・") + "。小説・会話は「低」がおすすめです。"
+      : "対応値を判定できないため「自動」をおすすめします。";
+}
+function thinkingForRequest() {
+  if (provider !== "gemini" || cfg.thinkingLevel === "auto") return null;
+  const levels = supportedThinkingLevels(modelName);
+  return levels.includes(cfg.thinkingLevel) ? cfg.thinkingLevel : null;
 }
 
 // OpenRouterには画像を読めない文章専用モデルもある。
@@ -474,6 +587,8 @@ function loadCreds() {
 loadCreds();
 let chatHistory = JSON.parse(localStorage.getItem("yoru_history")) || [];
 let rooms = (() => { try { return JSON.parse(localStorage.getItem("yoru_rooms")) || []; } catch (e) { return []; } })();
+let roomMode = localStorage.getItem("yoru_room_mode") === "novel" ? "novel" : "chat";
+let novelConfig = readNovelConfig(localStorage.getItem("yoru_novel_config"));
 
 /* ---- 記憶（1件ずつ持ち、関係するものだけ送る） ---- */
 let mems = (() => {
@@ -543,6 +658,7 @@ let cfg = {
   maxTok: numGet("yoru_maxtok", 4096),
   memTopK: numGet("yoru_mem_topk", 6),
   memEvery: numGet("yoru_mem_every", 8),
+  thinkingLevel: localStorage.getItem("yoru_thinking_level") || "low",
   priceIn: numGet("yoru_price_in", 1.5),
   priceOut: numGet("yoru_price_out", 7.5),
   rate: numGet("yoru_rate", 155)
@@ -550,10 +666,102 @@ let cfg = {
 let usage = (() => { try { return JSON.parse(localStorage.getItem("yoru_usage")) || { in: 0, out: 0 }; } catch (e) { return { in: 0, out: 0 }; } })();
 let imageUsage = numGet("yoru_image_usage_usd", 0);
 let identityImage = (() => { try { return JSON.parse(localStorage.getItem("yoru_identity_image")) || null; } catch (e) { return null; } })();
-let noThinking = true;   // 思考トークンを抑える。弾かれたら自動で切る
 let menuIndex = -1;
 let editResend = false;
 let pendingImgs = [];
+
+/* ---- 小説部屋 ---- */
+function buildNovelSystemPrompt() {
+  const n = novelConfig;
+  return `あなたは日本語小説の執筆者です。これは通常の対話ではなく、ひとつながりの小説を共同制作する部屋です。
+ユーザーの指示に従って物語本文を執筆・続行してください。説明、前置き、作成確認、箇条書き、プロンプト案は出さず、小説本文だけを出力します。
+
+【作品名】${n.title || "無題"}
+【ヨルの設定】${n.yoru || "指定なし"}
+【なおの設定】${n.nao || "指定なし"}
+【二人の関係】${n.relation || "指定なし"}
+【舞台・世界観】${n.world || "指定なし"}
+【視点】${n.view || "三人称"}
+【文体・雰囲気】${n.style || "自然な小説文"}
+【追加ルール】${n.extra || "なし"}
+【今回の分量】日本語で約${Math.max(500, Number(n.length) || 5000)}字を目安にする。
+
+過去の本文と矛盾しないように人物、時系列、場所、呼称、口調を維持してください。ユーザーが新しい設定を明示した場合は今回の指示を優先します。最後まで一度に完結させる指定がない限り、次へ自然に続けられる場面で終えてください。`;
+}
+function currentPromptText() {
+  return roomMode === "novel"
+    ? buildNovelSystemPrompt()
+    : SYSTEM_PROMPT + LEAD_RULE + FEWSHOT + (NOTE.trim() ? "\n\n【この部屋での追加指示】\n" + NOTE : "");
+}
+function persistRoomMode() {
+  localStorage.setItem("yoru_room_mode", roomMode);
+  localStorage.setItem("yoru_novel_config", JSON.stringify(novelConfig));
+  updateRoomModeUI();
+}
+function updateRoomModeUI() {
+  const btn = document.getElementById("novel-room-btn");
+  const input = document.getElementById("user-input");
+  if (btn) btn.textContent = roomMode === "novel" ? "小説設定" : "小説部屋";
+  if (input) input.placeholder = roomMode === "novel" ? "続きや場面を指示" : "メッセージ";
+  document.body.classList.toggle("novel-mode", roomMode === "novel");
+  updateLabel();
+}
+function novelFormValues() {
+  return {
+    title: document.getElementById("novel-title").value.trim() || "新しい小説",
+    yoru: document.getElementById("novel-yoru").value.trim(),
+    nao: document.getElementById("novel-nao").value.trim(),
+    relation: document.getElementById("novel-relation").value.trim(),
+    world: document.getElementById("novel-world").value.trim(),
+    view: document.getElementById("novel-view").value,
+    length: Math.min(20000, Math.max(500, Number(document.getElementById("novel-length").value) || 5000)),
+    style: document.getElementById("novel-style").value.trim(),
+    extra: document.getElementById("novel-extra").value.trim()
+  };
+}
+function fillNovelForm(config) {
+  const n = readNovelConfig(config);
+  document.getElementById("novel-title").value = n.title;
+  document.getElementById("novel-yoru").value = n.yoru;
+  document.getElementById("novel-nao").value = n.nao;
+  document.getElementById("novel-relation").value = n.relation;
+  document.getElementById("novel-world").value = n.world;
+  document.getElementById("novel-view").value = n.view;
+  document.getElementById("novel-length").value = n.length;
+  document.getElementById("novel-style").value = n.style;
+  document.getElementById("novel-extra").value = n.extra;
+}
+function openNovelPanel() {
+  fillNovelForm(roomMode === "novel" ? novelConfig : freshNovelConfig());
+  const apply = document.getElementById("novel-apply-btn");
+  apply.style.display = roomMode === "novel" ? "block" : "none";
+  document.getElementById("novel-panel").classList.add("on");
+}
+function closeNovelPanel() { document.getElementById("novel-panel").classList.remove("on"); }
+function applyNovelSettings() {
+  if (roomMode !== "novel") return;
+  novelConfig = novelFormValues();
+  persistRoomMode();
+  saveHistory();
+  closeNovelPanel();
+  estTokens();
+  alert("この小説の設定を更新しました。次の生成から反映されます。");
+}
+function createNovelRoom() {
+  const next = novelFormValues();
+  const hasConversation = chatHistory.some(m => m.role === "user");
+  if (hasConversation && !confirm("今の部屋を保管して、新しい小説部屋を作りますか？")) return;
+  if (hasConversation) archiveRoom("");
+  chatHistory = [];
+  roomMode = "novel";
+  novelConfig = next;
+  localStorage.setItem("yoru_mem_mark", "0");
+  persistRoomMode();
+  saveHistory();
+  renderChat();
+  closeNovelPanel();
+  document.getElementById("user-input").focus();
+}
 
 /* ---- メッセージの中身を取り出すヘルパー ---- */
 function msgText(m) {
@@ -646,7 +854,7 @@ function estTokens() {
   const countChatImages = !(provider === "openrouter" && isTextOnlyOpenRouterModel(modelName));
   let hist = 0;
   for (const m of chatHistory) hist += tok(msgText(m)) + (countChatImages ? msgImgs(m).length * 260 : 0);
-  const total = tok(SYSTEM_PROMPT) + tok(LEAD_RULE) + tok(FEWSHOT) + tok(NOTE) + tok(mem)
+  const total = tok(currentPromptText()) + (roomMode === "novel" ? 0 : tok(mem))
     + hist + tok(typing) + (countChatImages ? pendingImgs.length * 260 : 0);
   if (el) {
     const totalYen = yen(costOf(usage.in, usage.out));
@@ -732,9 +940,11 @@ function fillCfg() {
   if (ml) ml.textContent = "いま " + mems.length + " 件おぼえています。毎回そのうち最大 " + cfg.memTopK + " 件だけを送ります。";
   document.getElementById("safety-input").checked = cfg.safetyOff;
   document.getElementById("maxtok-input").value = cfg.maxTok;
+  document.getElementById("thinking-level-input").value = cfg.thinkingLevel;
   document.getElementById("price-in").value = cfg.priceIn;
   document.getElementById("price-out").value = cfg.priceOut;
   document.getElementById("rate-input").value = cfg.rate;
+  updateThinkingOptions();
   estTokens();
 }
 function updateProvHint() {
@@ -756,6 +966,7 @@ function onProviderChange() {
   document.getElementById("api-key-input").value = apiKey;
   document.getElementById("model-input").value = modelName;
   updateProvHint();
+  updateThinkingOptions();
 }
 
 function toggleKeyInput() {
@@ -780,6 +991,7 @@ function saveApiKey() {
 
   cfg.safetyOff = document.getElementById("safety-input").checked;
   cfg.maxTok = Math.max(256, Number(document.getElementById("maxtok-input").value) || 4096);
+  cfg.thinkingLevel = document.getElementById("thinking-level-input").value || "auto";
   cfg.memTopK = Math.max(0, Number(document.getElementById("memtopk-input").value) || 0);
   cfg.memEvery = Math.max(2, Number(document.getElementById("memevery-input").value) || 8);
   localStorage.setItem("yoru_mem_topk", cfg.memTopK);
@@ -789,12 +1001,11 @@ function saveApiKey() {
   cfg.rate = Number(document.getElementById("rate-input").value) || 155;
   localStorage.setItem("yoru_safety_off", cfg.safetyOff ? "1" : "0");
   localStorage.setItem("yoru_maxtok", cfg.maxTok);
+  localStorage.setItem("yoru_thinking_level", cfg.thinkingLevel);
   localStorage.setItem("yoru_price_in", cfg.priceIn);
   localStorage.setItem("yoru_price_out", cfg.priceOut);
   localStorage.setItem("yoru_rate", cfg.rate);
-  noThinking = true;
-
-  alert("保存しました！（" + provider + " / " + modelName + "）");
+  alert("保存しました！（" + provider + " / " + modelName + " / 思考：" + thinkingLabel(cfg.thinkingLevel) + "）");
   updateLabel();
   estTokens();
   document.getElementById("api-key-banner").style.display = "none";
@@ -803,6 +1014,8 @@ function saveApiKey() {
 function writeAll() {
   localStorage.setItem("yoru_history", JSON.stringify(chatHistory));
   localStorage.setItem("yoru_rooms", JSON.stringify(rooms));
+  localStorage.setItem("yoru_room_mode", roomMode);
+  localStorage.setItem("yoru_novel_config", JSON.stringify(novelConfig));
 }
 function stripPhotos(list) {
   let n = 0;
@@ -1319,11 +1532,11 @@ async function sendMessage() {
   await callApi();
 }
 
-async function callApi() {
-  let fullPrompt = SYSTEM_PROMPT + LEAD_RULE + FEWSHOT + (NOTE.trim() ? "\n\n【この部屋での追加指示】\n" + NOTE : "");
+async function callApi(skipThinking = false) {
+  let fullPrompt = currentPromptText();
   // いまの話題に関係する記憶だけを選んで載せる
   const recent = chatHistory.slice(-4).map(m => msgText(m)).join(" ");
-  const hits = pickMems(recent);
+  const hits = roomMode === "novel" ? [] : pickMems(recent);
   if (hits.length) {
     fullPrompt += "\n\n【覚えていること】\n" + hits.map(m => "・" + m.text).join("\n");
     for (const m of hits) m.use = (m.use || 0) + 1;
@@ -1333,6 +1546,10 @@ async function callApi() {
   let url, headers, body;
   let sentImagesToModel = false;
   const requestHistory = historyForRequest();
+
+  const novelMax = roomMode === "novel"
+    ? Math.max(Number(cfg.maxTok), Math.ceil((Number(novelConfig.length) || 5000) * 1.8), 4096)
+    : Number(cfg.maxTok);
 
   if (isOAIFormat(provider)) {
     url = oaiEndpoint(provider);
@@ -1356,12 +1573,13 @@ async function callApi() {
         return { role: m.role === "user" ? "user" : "assistant", content: t || omittedImageNote };
       })
     );
-    body = JSON.stringify({ model: modelName, messages: msgs, max_completion_tokens: Number(cfg.maxTok) });
+    body = JSON.stringify({ model: modelName, messages: msgs, max_completion_tokens: novelMax });
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
-    const gen = { maxOutputTokens: Number(cfg.maxTok) };
-    if (noThinking) gen.thinkingConfig = { thinkingLevel: "minimal" };
+    const gen = { maxOutputTokens: novelMax };
+    const thinking = skipThinking ? null : thinkingForRequest();
+    if (thinking) gen.thinkingConfig = { thinkingLevel: thinking };
     const payload = {
       system_instruction: { parts: [{ text: fullPrompt }] },
       contents: requestHistory,
@@ -1391,10 +1609,10 @@ async function callApi() {
         if (provider === "openrouter" && sentImagesToModel &&
             /no endpoints found[^.]*support image input|image input[^.]*not support/i.test(em)) {
           rememberTextOnlyOpenRouterModel(modelName);
-          return callApi();
+          return callApi(skipThinking);
         }
-        // 思考オフに対応しないモデルなら、その指定を外して一度だけやり直す
-        if (noThinking && /thinking/i.test(em)) { noThinking = false; return callApi(); }
+        // モデル側の対応表が変わっていた場合は、思考指定だけ外して一度再送する。
+        if (!skipThinking && /thinking/i.test(em)) return callApi(true);
         throw new Error(em);
       }
 
@@ -1463,7 +1681,9 @@ async function askModel(promptText, temp) {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
     const gen = {};
-    if (noThinking) gen.thinkingConfig = { thinkingLevel: "minimal" };
+    const levels = supportedThinkingLevels(modelName);
+    const cheapThinking = levels.includes("minimal") ? "minimal" : (levels.includes("low") ? "low" : null);
+    if (cheapThinking) gen.thinkingConfig = { thinkingLevel: cheapThinking };
     const p = { contents: [{ role: "user", parts: [{ text: promptText }] }], generationConfig: gen };
     if (cfg.safetyOff) p.safetySettings = SAFETY_CATS.map(c => ({ category: c, threshold: "BLOCK_NONE" }));
     body = JSON.stringify(p);
@@ -1479,7 +1699,7 @@ async function askModel(promptText, temp) {
 
 let extracting = false;
 async function extractMems(force) {
-  if (extracting || !apiKey) return;
+  if (roomMode === "novel" || extracting || !apiKey) return;
   const every = Math.max(2, Number(cfg.memEvery) || 8);
   const done = Number(localStorage.getItem("yoru_mem_mark") || 0);
   if (!force && chatHistory.length - done < every * 2) return;
@@ -1511,6 +1731,17 @@ async function extractMems(force) {
 
 async function newRoom() {
   if(!confirm("新しい部屋を作りますか？（記憶は引き継がれます）")) return;
+  if (roomMode === "novel") {
+    if (chatHistory.length) archiveRoom("");
+    chatHistory = [];
+    roomMode = "chat";
+    novelConfig = freshNovelConfig();
+    localStorage.setItem("yoru_mem_mark", "0");
+    persistRoomMode();
+    saveHistory(); renderChat(); estTokens();
+    alert("小説を保管して、通常の新しい部屋を作りました。");
+    return;
+  }
   if(chatHistory.length === 0) return;
 
   try {
@@ -1540,6 +1771,9 @@ async function newRoom() {
 
     archiveRoom(summary);
     chatHistory = [];
+    roomMode = "chat";
+    novelConfig = freshNovelConfig();
+    persistRoomMode();
     localStorage.setItem("yoru_mem_mark", "0");
     saveHistory();
     renderChat();
@@ -1549,6 +1783,9 @@ async function newRoom() {
     if (confirm("要約でエラーが出ました。\n要約なしで、この部屋を保管して新しい部屋を作りますか？")) {
       archiveRoom("");
       chatHistory = [];
+      roomMode = "chat";
+      novelConfig = freshNovelConfig();
+      persistRoomMode();
       localStorage.setItem("yoru_mem_mark", "0");
       saveHistory();
       renderChat();
@@ -1561,13 +1798,17 @@ async function newRoom() {
 function archiveRoom(summary) {
   if (!chatHistory.length) return;
   const first = chatHistory.find(m => m.role === "user");
-  const title = (msgText(first) || "写真ではじまった部屋").replace(/\s+/g, " ").slice(0, 26);
+  const title = roomMode === "novel"
+    ? (novelConfig.title || "新しい小説").slice(0, 40)
+    : (first ? msgText(first) : "会話").replace(/\s+/g, " ").slice(0, 26);
   rooms.unshift({
     id: Date.now(),
     title: title,
     savedAt: new Date().toISOString(),
     count: chatHistory.length,
     summary: summary || "",
+    mode: roomMode,
+    novelConfig: roomMode === "novel" ? readNovelConfig(novelConfig) : null,
     history: chatHistory.slice()
   });
 }
@@ -1585,7 +1826,7 @@ function openRooms() {
   if (!rooms.length) { body.innerHTML = '<p style="color:#6b7688">まだ保管された部屋はありません。「新しい部屋」を作ると、それまでの会話がここに残ります。</p>'; return; }
   body.innerHTML = rooms.map(r => `
     <div class="room-card">
-      <h4>${esc(r.title)}</h4>
+      <h4>${r.mode === "novel" ? "📖 " : ""}${esc(r.title)}</h4>
       <div class="meta">${fmtDate(r.savedAt)} ・ ${r.count || r.history.length}件</div>
       <div class="row">
         <button onclick="viewRoom(${r.id})">読む</button>
@@ -1616,6 +1857,9 @@ function restoreRoom(id) {
   if (!confirm("この部屋を今の会話として開き直します。\n今の会話は保管されます。よろしいですか？")) return;
   archiveRoom("");
   chatHistory = r.history.slice();
+  roomMode = r.mode === "novel" ? "novel" : "chat";
+  novelConfig = roomMode === "novel" ? readNovelConfig(r.novelConfig) : freshNovelConfig();
+  persistRoomMode();
   rooms = rooms.filter(x => x.id !== id);
   saveHistory();
   renderChat();
@@ -1632,10 +1876,11 @@ function deleteRoom(id) {
 /* ---- バックアップ ---- */
 function exportAll() {
   const data = {
-    app: "yoru-simple", version: 2,
+    app: "yoru-simple", version: 3,
     exportedAt: new Date().toISOString(),
     history: chatHistory,
     rooms: rooms,
+    currentRoom: { mode: roomMode, novelConfig: roomMode === "novel" ? novelConfig : null },
     mems: mems,
     persona: { base: SYSTEM_PROMPT, lead: LEAD_RULE, fewshot: FEWSHOT, note: NOTE },
     imageSettings: {
@@ -1643,7 +1888,8 @@ function exportAll() {
       ratio: localStorage.getItem("yoru_image_ratio") || "1:1",
       quality: localStorage.getItem("yoru_image_quality") || "medium",
       identityImage: identityImage
-    }
+    },
+    generationSettings: { thinkingLevel: cfg.thinkingLevel }
   };
   const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1667,6 +1913,11 @@ document.getElementById("import-file").addEventListener("change", e => {
     if (!confirm("今の会話と記憶を、このバックアップの内容で置き換えます。よろしいですか？")) return;
     chatHistory = d.history;
     if (Array.isArray(d.rooms)) rooms = d.rooms;
+    if (d.currentRoom) {
+      roomMode = d.currentRoom.mode === "novel" ? "novel" : "chat";
+      novelConfig = roomMode === "novel" ? readNovelConfig(d.currentRoom.novelConfig) : freshNovelConfig();
+      persistRoomMode();
+    }
     if (d.persona) {
       if (typeof d.persona.base === "string") { SYSTEM_PROMPT = d.persona.base; localStorage.setItem("yoru_persona", SYSTEM_PROMPT); }
       if (typeof d.persona.lead === "string") { LEAD_RULE = d.persona.lead; localStorage.setItem("yoru_lead", LEAD_RULE); }
@@ -1688,6 +1939,10 @@ document.getElementById("import-file").addEventListener("change", e => {
         localStorage.setItem("yoru_identity_image", JSON.stringify(identityImage));
       }
     }
+    if (d.generationSettings && typeof d.generationSettings.thinkingLevel === "string") {
+      cfg.thinkingLevel = d.generationSettings.thinkingLevel;
+      localStorage.setItem("yoru_thinking_level", cfg.thinkingLevel);
+    }
     saveHistory();
     renderChat();
     estTokens();
@@ -1696,12 +1951,12 @@ document.getElementById("import-file").addEventListener("change", e => {
   r.readAsText(f);
 });
 
-if(chatHistory.length === 0) {
+if(chatHistory.length === 0 && roomMode !== "novel") {
   chatHistory.push({ role: "model", parts: [{ text: "「よく来たな、なお。さあ、こちらに来て座るといい。」" }] });
   saveHistory();
 }
 function updateLabel() {
-  document.getElementById("model-label").textContent = modelName;
+  document.getElementById("model-label").textContent = (roomMode === "novel" ? "📖 " : "") + modelName;
 }
 const inpEl = document.getElementById("user-input");
 function growInput() {
@@ -1710,6 +1965,7 @@ function growInput() {
 }
 inpEl.addEventListener("input", () => { growInput(); estTokens(); });
 growInput();
+updateRoomModeUI();
 renderChat();
 checkApiKey();
 updateLabel();
