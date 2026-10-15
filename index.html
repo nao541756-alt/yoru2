@@ -215,7 +215,7 @@
   </select>
   <p class="note" id="prov-hint"></p>
   <input type="password" id="api-key-input" placeholder="APIキーを入力">
-  <input type="text" id="model-input" list="model-presets" placeholder="モデル名" oninput="updateThinkingOptions()">
+  <input type="text" id="model-input" list="model-presets" placeholder="モデル名" oninput="updateThinkingOptions(); updateOpenRouterRouteUI()">
   <datalist id="model-presets">
     <option value="google/gemini-4-argon"></option>
     <option value="google/gemini-3.7-flash"></option>
@@ -232,6 +232,15 @@
     <option value="gemini-3.7-flash"></option>
     <option value="gemini-3-flash-preview"></option>
   </datalist>
+  <div id="openrouter-route-box" style="display:none;">
+    <div class="lbl">OpenRouterのGoogle接続先</div>
+    <select id="openrouter-route-input">
+      <option value="auto">自動（おすすめ）</option>
+      <option value="vertex">Google Vertexのみ</option>
+      <option value="ai-studio">Google AI Studioのみ</option>
+    </select>
+    <p class="note" id="openrouter-route-hint">GoogleのGeminiモデルをOpenRouterで使うときだけ反映されます。</p>
+  </div>
   <button onclick="saveApiKey()">保存</button>
   <hr>
   <div class="lbl">ヨルの人格</div>
@@ -510,6 +519,39 @@ function oaiHeaders(p, key) {
   return h;
 }
 
+/* ---- OpenRouterのGoogle接続先 ---- */
+function isOpenRouterGoogleModel(name) {
+  return /^google\/gemini-/i.test(String(name || "").trim());
+}
+function openRouterRouteLabel(value) {
+  return ({ auto: "自動", vertex: "Google Vertexのみ", "ai-studio": "Google AI Studioのみ" })[value] || "自動";
+}
+function openRouterProviderPreference(name = modelName) {
+  if (provider !== "openrouter" || !isOpenRouterGoogleModel(name)) return null;
+  if (cfg.openRouterRoute === "vertex") return { only: ["google-vertex"], allow_fallbacks: false };
+  if (cfg.openRouterRoute === "ai-studio") return { only: ["google-ai-studio"], allow_fallbacks: false };
+  return null;
+}
+function applyOpenRouterRoute(payload, name = modelName) {
+  const pref = openRouterProviderPreference(name);
+  if (pref) payload.provider = pref;
+  return payload;
+}
+function updateOpenRouterRouteUI() {
+  const box = document.getElementById("openrouter-route-box");
+  const sel = document.getElementById("openrouter-route-input");
+  const hint = document.getElementById("openrouter-route-hint");
+  if (!box || !sel) return;
+  const p = (document.getElementById("provider-input") || {}).value || provider;
+  const typed = (document.getElementById("model-input") || {}).value || modelName;
+  box.style.display = p === "openrouter" ? "block" : "none";
+  const usable = p === "openrouter" && isOpenRouterGoogleModel(typed);
+  sel.disabled = !usable;
+  if (hint) hint.textContent = usable
+    ? "固定すると、選んだ接続先が利用できない時はエラーになります。自動ならOpenRouterが接続先を選びます。"
+    : "GoogleのGeminiモデル（google/gemini-…）をOpenRouterで使うときだけ反映されます。";
+}
+
 /* ---- Geminiの思考レベル（モデルごとに対応値だけを使う） ---- */
 function bareModelId(name) { return String(name || "").trim().toLowerCase().replace(/^google\//, ""); }
 function supportedThinkingLevels(name) {
@@ -659,6 +701,7 @@ let cfg = {
   memTopK: numGet("yoru_mem_topk", 6),
   memEvery: numGet("yoru_mem_every", 8),
   thinkingLevel: localStorage.getItem("yoru_thinking_level") || "low",
+  openRouterRoute: localStorage.getItem("yoru_openrouter_route") || "auto",
   priceIn: numGet("yoru_price_in", 1.5),
   priceOut: numGet("yoru_price_out", 7.5),
   rate: numGet("yoru_rate", 155)
@@ -941,10 +984,12 @@ function fillCfg() {
   document.getElementById("safety-input").checked = cfg.safetyOff;
   document.getElementById("maxtok-input").value = cfg.maxTok;
   document.getElementById("thinking-level-input").value = cfg.thinkingLevel;
+  document.getElementById("openrouter-route-input").value = cfg.openRouterRoute;
   document.getElementById("price-in").value = cfg.priceIn;
   document.getElementById("price-out").value = cfg.priceOut;
   document.getElementById("rate-input").value = cfg.rate;
   updateThinkingOptions();
+  updateOpenRouterRouteUI();
   estTokens();
 }
 function updateProvHint() {
@@ -967,6 +1012,7 @@ function onProviderChange() {
   document.getElementById("model-input").value = modelName;
   updateProvHint();
   updateThinkingOptions();
+  updateOpenRouterRouteUI();
 }
 
 function toggleKeyInput() {
@@ -992,6 +1038,7 @@ function saveApiKey() {
   cfg.safetyOff = document.getElementById("safety-input").checked;
   cfg.maxTok = Math.max(256, Number(document.getElementById("maxtok-input").value) || 4096);
   cfg.thinkingLevel = document.getElementById("thinking-level-input").value || "auto";
+  cfg.openRouterRoute = document.getElementById("openrouter-route-input").value || "auto";
   cfg.memTopK = Math.max(0, Number(document.getElementById("memtopk-input").value) || 0);
   cfg.memEvery = Math.max(2, Number(document.getElementById("memevery-input").value) || 8);
   localStorage.setItem("yoru_mem_topk", cfg.memTopK);
@@ -1002,10 +1049,13 @@ function saveApiKey() {
   localStorage.setItem("yoru_safety_off", cfg.safetyOff ? "1" : "0");
   localStorage.setItem("yoru_maxtok", cfg.maxTok);
   localStorage.setItem("yoru_thinking_level", cfg.thinkingLevel);
+  localStorage.setItem("yoru_openrouter_route", cfg.openRouterRoute);
   localStorage.setItem("yoru_price_in", cfg.priceIn);
   localStorage.setItem("yoru_price_out", cfg.priceOut);
   localStorage.setItem("yoru_rate", cfg.rate);
-  alert("保存しました！（" + provider + " / " + modelName + " / 思考：" + thinkingLabel(cfg.thinkingLevel) + "）");
+  const routeNote = provider === "openrouter" && isOpenRouterGoogleModel(modelName)
+    ? " / 接続先：" + openRouterRouteLabel(cfg.openRouterRoute) : "";
+  alert("保存しました！（" + provider + " / " + modelName + " / 思考：" + thinkingLabel(cfg.thinkingLevel) + routeNote + "）");
   updateLabel();
   estTokens();
   document.getElementById("api-key-banner").style.display = "none";
@@ -1573,7 +1623,7 @@ async function callApi(skipThinking = false) {
         return { role: m.role === "user" ? "user" : "assistant", content: t || omittedImageNote };
       })
     );
-    body = JSON.stringify({ model: modelName, messages: msgs, max_completion_tokens: novelMax });
+    body = JSON.stringify(applyOpenRouterRoute({ model: modelName, messages: msgs, max_completion_tokens: novelMax }));
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
@@ -1676,7 +1726,7 @@ async function askModel(promptText, temp) {
   if (isOAIFormat(provider)) {
     url = oaiEndpoint(provider);
     headers = oaiHeaders(provider, apiKey);
-    body = JSON.stringify({ model: modelName, messages: [{ role: "user", content: promptText }] });
+    body = JSON.stringify(applyOpenRouterRoute({ model: modelName, messages: [{ role: "user", content: promptText }] }));
   } else {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     headers = { "Content-Type": "application/json" };
@@ -1755,10 +1805,10 @@ async function newRoom() {
     if (isOAIFormat(provider)) {
       sUrl = oaiEndpoint(provider);
       sHeaders = oaiHeaders(provider, apiKey);
-      sBody = JSON.stringify({
+      sBody = JSON.stringify(applyOpenRouterRoute({
         model: modelName,
         messages: summaryPrompt.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: msgText(m) }))
-      });
+      }));
     } else {
       sUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
       sHeaders = { "Content-Type": "application/json" };
@@ -1876,7 +1926,7 @@ function deleteRoom(id) {
 /* ---- バックアップ ---- */
 function exportAll() {
   const data = {
-    app: "yoru-simple", version: 3,
+    app: "yoru-simple", version: 4,
     exportedAt: new Date().toISOString(),
     history: chatHistory,
     rooms: rooms,
@@ -1889,7 +1939,7 @@ function exportAll() {
       quality: localStorage.getItem("yoru_image_quality") || "medium",
       identityImage: identityImage
     },
-    generationSettings: { thinkingLevel: cfg.thinkingLevel }
+    generationSettings: { thinkingLevel: cfg.thinkingLevel, openRouterRoute: cfg.openRouterRoute }
   };
   const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1942,6 +1992,10 @@ document.getElementById("import-file").addEventListener("change", e => {
     if (d.generationSettings && typeof d.generationSettings.thinkingLevel === "string") {
       cfg.thinkingLevel = d.generationSettings.thinkingLevel;
       localStorage.setItem("yoru_thinking_level", cfg.thinkingLevel);
+    }
+    if (d.generationSettings && typeof d.generationSettings.openRouterRoute === "string") {
+      cfg.openRouterRoute = d.generationSettings.openRouterRoute;
+      localStorage.setItem("yoru_openrouter_route", cfg.openRouterRoute);
     }
     saveHistory();
     renderChat();
