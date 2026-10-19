@@ -270,6 +270,15 @@
   </div>
   <input type="file" id="import-file" accept="application/json,.json" style="display:none">
   <hr>
+  <div class="lbl">LINEヨルとの会話共有</div>
+  <p class="note">Apps ScriptのWebhook URLをこの端末だけに保存します。URLはバックアップには含まれません。</p>
+  <input type="password" id="bridge-url-input" placeholder="https://script.google.com/macros/s/.../exec?key=...">
+  <div class="row">
+    <button onclick="saveBridgeUrl()">接続して保存</button>
+    <button class="sec" onclick="syncSharedConversation(false)">今すぐ同期</button>
+  </div>
+  <p id="bridge-status" class="note" role="status"></p>
+  <hr>
   <div class="lbl">過去の部屋</div>
   <button class="sec" onclick="openRooms()">これまでの部屋を見る</button>
   <hr>
@@ -718,6 +727,8 @@ let cfg = {
 let usage = (() => { try { return JSON.parse(localStorage.getItem("yoru_usage")) || { in: 0, out: 0 }; } catch (e) { return { in: 0, out: 0 }; } })();
 let imageUsage = numGet("yoru_image_usage_usd", 0);
 let identityImage = (() => { try { return JSON.parse(localStorage.getItem("yoru_identity_image")) || null; } catch (e) { return null; } })();
+let bridgeUrl = localStorage.getItem("yoru_bridge_url") || "";
+let sharedConversation = (() => { try { const v = JSON.parse(localStorage.getItem("yoru_shared_chat") || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } })();
 let menuIndex = -1;
 let editResend = false;
 let pendingImgs = [];
@@ -987,6 +998,9 @@ function clearMems() {
 }
 function fillCfg() {
   fillPersona();
+  const bridgeInput = document.getElementById("bridge-url-input");
+  if (bridgeInput) bridgeInput.value = bridgeUrl;
+  updateBridgeStatus(bridgeUrl ? "接続URLは保存済みです。" : "未接続です。");
   document.getElementById("memtopk-input").value = cfg.memTopK;
   document.getElementById("memevery-input").value = cfg.memEvery;
   const ml = document.getElementById("mem-line");
@@ -1562,6 +1576,106 @@ async function finishGame() {
   if (apiKey) { closeGame(); await callApi(); }
 }
 
+/* ---- LINEヨルと自作アプリの直近会話を共有 ---- */
+function updateBridgeStatus(text) {
+  const el = document.getElementById("bridge-status");
+  if (el) el.textContent = text || "";
+}
+
+function bridgeJsonp(params) {
+  return new Promise((resolve, reject) => {
+    if (!bridgeUrl) { reject(new Error("接続URLが未設定です。")); return; }
+    let url;
+    try { url = new URL(bridgeUrl); }
+    catch (e) { reject(new Error("接続URLの形を確認してください。")); return; }
+    const callback = "yoruBridgeCb_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    const script = document.createElement("script");
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      try { delete window[callback]; } catch (e) { window[callback] = undefined; }
+      script.remove();
+    };
+    window[callback] = data => { cleanup(); resolve(data || {}); };
+    Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, String(v)));
+    url.searchParams.set("callback", callback);
+    url.searchParams.set("_", Date.now());
+    script.src = url.toString();
+    script.onerror = () => { cleanup(); reject(new Error("共有先へ接続できませんでした。")); };
+    timer = setTimeout(() => { cleanup(); reject(new Error("共有先から返事がありませんでした。")); }, 15000);
+    document.head.appendChild(script);
+  });
+}
+
+function newBridgeId() {
+  if (window.crypto && crypto.randomUUID) return "app-" + crypto.randomUUID();
+  return "app-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+}
+
+async function saveBridgeUrl() {
+  const input = document.getElementById("bridge-url-input");
+  const value = String(input && input.value || "").trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/(?:exec|dev)\?key=.+/i.test(value)) {
+    alert("Apps ScriptのWebhook URL（/exec?key=...）をそのまま貼ってください。");
+    return;
+  }
+  bridgeUrl = value.replace(/\/dev(\?key=)/i, "/exec$1");
+  localStorage.setItem("yoru_bridge_url", bridgeUrl);
+  input.value = bridgeUrl;
+  updateBridgeStatus("接続を確認しています…");
+  try {
+    const result = await bridgeJsonp({ action: "ping" });
+    if (!result.ok) throw new Error(result.error || "接続できませんでした。");
+    await syncSharedConversation(true);
+    updateBridgeStatus("LINEヨルと接続済みです。次の会話から共有されます。");
+    alert("LINEヨルとの接続が完了しました。次の会話からつながります。");
+  } catch (e) {
+    updateBridgeStatus("接続エラー：" + e.message);
+    alert("接続できませんでした。Apps Scriptを最新版で再デプロイしたあと、もう一度試してください。");
+  }
+}
+
+async function syncSharedConversation(silent = true) {
+  if (!bridgeUrl || roomMode === "novel") return false;
+  if (!silent) updateBridgeStatus("LINEの会話を同期しています…");
+  try {
+    const result = await bridgeJsonp({ action: "pull" });
+    if (!result.ok || !Array.isArray(result.items)) throw new Error(result.error || "会話を取得できませんでした。");
+    sharedConversation = result.items.slice(-40);
+    localStorage.setItem("yoru_shared_chat", JSON.stringify(sharedConversation));
+    updateBridgeStatus("接続済み・直近" + sharedConversation.length + "件を共有中です。");
+    return true;
+  } catch (e) {
+    updateBridgeStatus("同期エラー：" + e.message);
+    if (!silent) alert("同期できませんでした。接続URLとApps Scriptのデプロイを確認してください。");
+    return false;
+  }
+}
+
+async function appendSharedMessage(role, text, id) {
+  if (!bridgeUrl || roomMode === "novel" || !String(text || "").trim()) return;
+  try {
+    const result = await bridgeJsonp({ action: "append", role, text: String(text).slice(0, 700), id });
+    if (!result.ok) throw new Error(result.error || "共有できませんでした。");
+    if (result.item) sharedConversation = sharedConversation.concat(result.item).slice(-40);
+    localStorage.setItem("yoru_shared_chat", JSON.stringify(sharedConversation));
+    updateBridgeStatus("接続済み・会話を共有しました。");
+  } catch (e) {
+    updateBridgeStatus("共有エラー：" + e.message);
+  }
+}
+
+function sharedConversationPrompt() {
+  if (!bridgeUrl || !sharedConversation.length || roomMode === "novel") return "";
+  const localIds = new Set(chatHistory.map(m => m.bridgeId).filter(Boolean));
+  const lines = sharedConversation.filter(x => x && x.text && !localIds.has(x.id)).slice(-20).map(x =>
+    (x.role === "assistant" ? "夜俊" : "なお") + "（" + (x.source === "app" ? "アプリ" : "LINE") + "）: " + String(x.text).slice(0, 1000)
+  );
+  if (!lines.length) return "";
+  return "\n\n【LINEとアプリで共有している直近の会話】\n" + lines.join("\n") +
+    "\nこれは会話をつなぐための記録です。現在の部屋の直前の発言を最優先し、記録にない事実は作らないでください。";
+}
+
 async function sendMessage() {
   const input = document.getElementById("user-input");
   const text = input.value.trim();
@@ -1574,6 +1688,7 @@ async function sendMessage() {
     requestAnimationFrame(() => { banner.scrollTop = 0; });
     return;
   }
+  if (roomMode !== "novel") await syncSharedConversation(true);
   input.value = "";
   growInput();
 
@@ -1582,9 +1697,11 @@ async function sendMessage() {
   parts.push({ text: text || "[写真を送った]" });
   pendingImgs = []; drawAttach();
 
-  chatHistory.push({ role: "user", at: Date.now(), parts: parts });
+  const userBridgeId = newBridgeId();
+  chatHistory.push({ role: "user", at: Date.now(), bridgeId: userBridgeId, parts: parts });
   renderChat();
   saveHistory();
+  if (roomMode !== "novel") appendSharedMessage("user", text || "[写真を送った]", userBridgeId);
   if (makeImage) {
     await generateImageFromChat(text, referenceImages);
     return;
@@ -1598,6 +1715,7 @@ async function callApi(skipThinking = false) {
   const recent = chatHistory.filter(m => m.role === "user").slice(-3).map(m => msgText(m)).join(" ");
   const hits = roomMode === "novel" ? [] : pickMems(recent);
   if (roomMode !== "novel") fullPrompt += memoryPrompt(hits);
+  if (roomMode !== "novel") fullPrompt += sharedConversationPrompt();
 
   let url, headers, body;
   let sentImagesToModel = false;
@@ -1700,9 +1818,11 @@ async function callApi(skipThinking = false) {
 
       addUsage(data);
       const replyIndex = chatHistory.length;
-      chatHistory.push({ role: "model", at: Date.now(), parts: [{ text: replyText }] });
+      const replyBridgeId = newBridgeId();
+      chatHistory.push({ role: "model", at: Date.now(), bridgeId: replyBridgeId, parts: [{ text: replyText }] });
       renderChat(replyIndex);
       saveHistory();
+      if (roomMode !== "novel") appendSharedMessage("assistant", replyText, replyBridgeId);
       setTimeout(() => extractMems(false), 300);
       if (note) alert("返事は届きましたが" + note + "\n設定の「返答の最大トークン」を増やすと改善します。");
       return;
@@ -2138,6 +2258,7 @@ updateRoomModeUI();
 renderChat();
 checkApiKey();
 updateLabel();
+if (bridgeUrl) syncSharedConversation(true);
 estTokens();
 </script>
 </body>
